@@ -153,6 +153,11 @@ func (s *ServedMods) SchemaIntrospectionJSONFile(ctx context.Context, hiddenType
 	if err != nil {
 		return dagql.Result[*File]{}, err
 	}
+	dagqlCache, err := s.root.Cache(ctx)
+	if err != nil {
+		return dagql.Result[*File]{}, fmt.Errorf("failed to get cache: %w", err)
+	}
+	dag = dag.WithCache(dagqlCache)
 	return schemaJSONFileFromServer(ctx, dag, hiddenTypes)
 }
 
