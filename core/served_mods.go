@@ -125,7 +125,7 @@ func (s *ServedMods) TypeDefs(ctx context.Context, dag *dagql.Server) ([]*TypeDe
 // Schema builds and caches the combined outer (client-facing) schema for all
 // served modules. This server includes entrypoint proxy fields on Query.
 func (s *ServedMods) Schema(ctx context.Context) (*dagql.Server, error) {
-	srv, _, err := s.lazilyLoadSchema(ctx)
+	srv, _, _, err := s.lazilyLoadSchema(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load schema: %w", err)
 	}
@@ -138,8 +138,11 @@ func (s *ServedMods) Schema(ctx context.Context) (*dagql.Server, error) {
 
 // SchemaJSONFile returns the introspection JSON file for the schema.
 func (s *ServedMods) SchemaJSONFile(ctx context.Context) (dagql.Result[*File], error) {
-	_, schemaJSONFile, err := s.lazilyLoadSchema(ctx)
-	return schemaJSONFile, err
+	_, _, schemaJSONFile, err := s.lazilyLoadSchema(ctx)
+	if err != nil {
+		return dagql.Result[*File]{}, err
+	}
+	return schemaJSONFile, nil
 }
 
 // SchemaIntrospectionJSONFile returns an introspection JSON file for the
@@ -187,11 +190,11 @@ func (s *ServedMods) ModTypeFor(ctx context.Context, typeDef *TypeDef) (ModType,
 // where no proxy can shadow a core field. When no module has Entrypoint set,
 // the inner and outer servers are the same.
 func (s *ServedMods) Server(ctx context.Context) (*dagql.Server, error) {
-	_, _, err := s.lazilyLoadSchema(ctx)
+	_, inner, _, err := s.lazilyLoadSchema(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return s.lazilyLoadedInner, nil
+	return inner, nil
 }
 
 func (s *ServedMods) invalidateCache() {
@@ -202,21 +205,27 @@ func (s *ServedMods) invalidateCache() {
 }
 
 func (s *ServedMods) lazilyLoadSchema(ctx context.Context) (
-	loadedSchema *dagql.Server,
-	loadedSchemaJSONFile dagql.Result[*File],
+	_ *dagql.Server,
+	_ *dagql.Server,
+	_ dagql.Result[*File],
 	rerr error,
 ) {
+	var (
+		loadedSchema         *dagql.Server
+		loadedInner          *dagql.Server
+		loadedSchemaJSONFile dagql.Result[*File]
+	)
 	s.loadSchemaLock.Lock()
 	defer s.loadSchemaLock.Unlock()
 	if s.lazilyLoadedSchema != nil {
-		return s.lazilyLoadedSchema, s.lazilyLoadedSchemaJSONFile, nil
+		return s.lazilyLoadedSchema, s.lazilyLoadedInner, s.lazilyLoadedSchemaJSONFile, nil
 	}
 	if s.loadSchemaErr != nil {
-		return nil, loadedSchemaJSONFile, s.loadSchemaErr
+		return nil, nil, loadedSchemaJSONFile, s.loadSchemaErr
 	}
 	defer func() {
 		s.lazilyLoadedSchema = loadedSchema
-		s.lazilyLoadedInner = loadedSchema // default: inner == outer
+		s.lazilyLoadedInner = loadedInner
 		s.lazilyLoadedSchemaJSONFile = loadedSchemaJSONFile
 		s.loadSchemaErr = rerr
 	}()
@@ -238,9 +247,9 @@ func (s *ServedMods) lazilyLoadSchema(ctx context.Context) (
 		}
 		dag, schemaJSONFile, err := buildSchema(ctx, s.root, mods, nil)
 		if err != nil {
-			return nil, loadedSchemaJSONFile, err
+			return nil, nil, loadedSchemaJSONFile, err
 		}
-		return dag, schemaJSONFile, nil
+		return dag, dag, schemaJSONFile, nil
 	}
 
 	// Build inner server: all modules with Entrypoint forced to false.
@@ -252,7 +261,7 @@ func (s *ServedMods) lazilyLoadSchema(ctx context.Context) (
 	}
 	inner, _, err := buildSchema(ctx, s.root, innerMods, nil)
 	if err != nil {
-		return nil, loadedSchemaJSONFile, err
+		return nil, nil, loadedSchemaJSONFile, err
 	}
 
 	// Build outer server: all modules with real Entrypoint flags.
@@ -262,7 +271,7 @@ func (s *ServedMods) lazilyLoadSchema(ctx context.Context) (
 	}
 	outer, schemaJSONFile, err := buildSchema(ctx, s.root, outerMods, nil)
 	if err != nil {
-		return nil, loadedSchemaJSONFile, err
+		return nil, nil, loadedSchemaJSONFile, err
 	}
 
 	// Wire up delegation: outer server delegates ID loading to inner server,
@@ -270,10 +279,5 @@ func (s *ServedMods) lazilyLoadSchema(ctx context.Context) (
 	outer.IDLoader = inner.Load
 	outer.Inner = inner
 
-	// Override the default: inner is the canonical server for ID loading.
-	defer func() {
-		s.lazilyLoadedInner = inner
-	}()
-
-	return outer, schemaJSONFile, nil
+	return outer, inner, schemaJSONFile, nil
 }
