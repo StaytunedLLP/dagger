@@ -79,9 +79,15 @@ Examples:
 			}
 			o := mod.MainObject.AsFunctionProvider()
 			// Walk the hypothetical function pipeline specified by the args
-			for _, field := range functionPath {
+			for i, field := range functionPath {
 				// Lookup the next function in the specified pipeline
 				nextFunc, err := GetSupportedFunction(mod, o, field)
+				if err != nil && i == 0 {
+					if sibling := findSiblingEntrypoint(mod, field); sibling != nil {
+						nextFunc = sibling
+						err = nil
+					}
+				}
 				if err != nil {
 					return err
 				}
@@ -110,12 +116,29 @@ Examples:
 			filterCore := len(functionPath) == 0 &&
 				mod.MainObject.AsObject != nil &&
 				mod.MainObject.AsObject.Name == "Query"
-			return functionListRun(o, cmd.OutOrStdout(), cmd.ErrOrStderr(), filterCore)
+
+			var siblingFns []*modFunction
+			if len(functionPath) == 0 &&
+				mod.MainObject.AsObject != nil &&
+				mod.MainObject.AsObject.Name != "Query" {
+				siblingFns = mod.siblingModuleEntrypoints()
+			}
+			return functionListRun(o, cmd.OutOrStdout(), cmd.ErrOrStderr(), filterCore, siblingFns)
 		})
 	},
 }
 
-func functionListRun(o functionProvider, writer io.Writer, errWriter io.Writer, filterCore bool) error {
+func findSiblingEntrypoint(mod *moduleDef, name string) *modFunction {
+	for _, fn := range mod.siblingModuleEntrypoints() {
+		if fn.Name == name || fn.CmdName() == name {
+			mod.LoadFunctionTypeDefs(fn)
+			return fn
+		}
+	}
+	return nil
+}
+
+func functionListRun(o functionProvider, writer io.Writer, errWriter io.Writer, filterCore bool, siblingFns []*modFunction) error {
 	fns, skipped := GetSupportedFunctions(o)
 
 	// At the Query root, filter out core API constructors — only show module
@@ -135,6 +158,8 @@ func functionListRun(o functionProvider, writer io.Writer, errWriter io.Writer, 
 		fns = filtered
 		skipped = nil // don't show core "skipped" noise either
 	}
+
+	fns = append(fns, siblingFns...)
 
 	if len(fns) == 0 {
 		fmt.Fprintln(errWriter, "No functions found.")
