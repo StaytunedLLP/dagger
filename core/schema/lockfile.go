@@ -307,15 +307,7 @@ func updateModuleResolveLockEntry(ctx context.Context, query *core.Query, entry 
 		return workspace.LookupResult{}, fmt.Errorf("invalid %s source %v", lockModulesResolveOperation, entry.Inputs[0])
 	}
 
-	commit, err := resolveModuleSourceCommit(ctx, query, source)
-	if err != nil {
-		return workspace.LookupResult{}, err
-	}
-
-	return workspace.LookupResult{
-		Value:  commit,
-		Policy: entry.Result.Policy,
-	}, nil
+	return resolveModuleSourceLookupResult(ctx, query, source, entry.Result.Policy)
 }
 
 func resolveContainerFromDigest(ctx context.Context, query *core.Query, refString, platformString string) (string, error) {
@@ -400,31 +392,52 @@ func updateGitTagLockEntry(ctx context.Context, entry workspace.LookupEntry) (wo
 }
 
 func resolveModuleSourceCommit(ctx context.Context, query *core.Query, source string) (string, error) {
+	result, err := resolveModuleSourceLookupResult(ctx, query, source, "")
+	if err != nil {
+		return "", err
+	}
+	return result.Value, nil
+}
+
+func resolveModuleSourceLookupResult(
+	ctx context.Context,
+	query *core.Query,
+	source string,
+	policy workspace.LockPolicy,
+) (workspace.LookupResult, error) {
 	ctx = lookupRefreshContext(ctx)
 
 	bk, err := query.Buildkit(ctx)
 	if err != nil {
-		return "", fmt.Errorf("buildkit client: %w", err)
+		return workspace.LookupResult{}, fmt.Errorf("buildkit client: %w", err)
 	}
 
 	parsedRef, err := core.ParseRefString(ctx, core.NewCallerStatFS(bk), source, "")
 	if err != nil {
-		return "", fmt.Errorf("parse module source %q: %w", source, err)
+		return workspace.LookupResult{}, fmt.Errorf("parse module source %q: %w", source, err)
 	}
 	if parsedRef.Kind != core.ModuleSourceKindGit {
-		return "", fmt.Errorf("module source %q is not a git source", source)
+		return workspace.LookupResult{}, fmt.Errorf("module source %q is not a git source", source)
 	}
 
 	dag, err := core.CurrentDagqlServer(ctx)
 	if err != nil {
-		return "", fmt.Errorf("query server: %w", err)
+		return workspace.LookupResult{}, fmt.Errorf("query server: %w", err)
 	}
 
 	gitRef, err := parsedRef.Git.GitRef(ctx, dag, "")
 	if err != nil {
-		return "", fmt.Errorf("resolve module source %q: %w", source, err)
+		return workspace.LookupResult{}, fmt.Errorf("resolve module source %q: %w", source, err)
 	}
-	return gitRef.Self().Ref.SHA, nil
+
+	if policy == "" {
+		policy = moduleResolveLockPolicy(gitRef.Self().Ref)
+	}
+
+	return workspace.LookupResult{
+		Value:  gitRef.Self().Ref.SHA,
+		Policy: policy,
+	}, nil
 }
 
 func parseGitLookupInputs(operation string, inputs []any) (string, string, error) {
