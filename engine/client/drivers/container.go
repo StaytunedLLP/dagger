@@ -33,6 +33,7 @@ func init() {
 		podmanImageDriver,
 		finchImageDriver,
 		nerdctlImageDriver,
+		incusImageDriver,
 	)
 	register("container",
 		dockerContainerDriver,
@@ -40,6 +41,7 @@ func init() {
 		podmanContainerDriver,
 		finchContainerDriver,
 		nerdctlContainerDriver,
+		incusContainerDriver,
 	)
 
 	register("image+docker", dockerImageDriver)
@@ -56,6 +58,9 @@ func init() {
 
 	register("image+nerdctl", nerdctlImageDriver)
 	register("container+nerdctl", nerdctlContainerDriver)
+
+	register("image+incus", incusImageDriver)
+	register("container+incus", incusContainerDriver)
 }
 
 var (
@@ -73,6 +78,9 @@ var (
 
 	finchImageDriver     = &imageDriver{docker{cmd: "finch"}}
 	finchContainerDriver = &containerDriver{docker{cmd: "finch"}}
+
+	incusImageDriver     = &imageDriver{incus{}}
+	incusContainerDriver = &containerDriver{incus{}}
 )
 
 var (

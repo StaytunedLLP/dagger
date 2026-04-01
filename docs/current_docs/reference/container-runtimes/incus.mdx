@@ -1,0 +1,38 @@
+---
+title: "Incus"
+description: "Learn how to use Dagger with Incus."
+slug: /reference/container-runtimes/incus
+---
+
+# Incus
+
+Dagger can be used with Incus as a local OCI-compatible container runtime.
+
+## Prerequisites
+
+Ensure that the `incus` client can talk to a running Incus daemon on the host:
+
+```console
+$ incus info
+Server version: 6.x
+Server status:  Running
+...
+```
+
+Incus is available from the [official installation docs](https://linuxcontainers.org/incus/docs/main/installing/). For host and kernel requirements, see the [Incus requirements documentation](https://linuxcontainers.org/incus/docs/main/requirements/).
+
+## Example
+
+```console
+$ incus list
+NAME    STATE    IPV4    IPV6
+$ dagger core version
+v0.18.19
+$ incus list
+NAME                  STATE   IPV4       IPV6
+dagger-engine-v0.18.19 RUNNING 10.0.0.12  -
+```
+
+## Resources
+
+If you have any questions about using Incus with Dagger, join our [Discord](https://discord.gg/dagger-io) and ask in our [help channel](https://discord.com/channels/707636530424053791/1030538312508776540).

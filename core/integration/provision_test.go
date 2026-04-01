@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	"dagger.io/dagger"
+	"github.com/dagger/dagger/engine/client/imageload"
 	"github.com/dagger/dagger/engine"
 	"github.com/dagger/dagger/internal/buildkit/identity"
 	"github.com/dagger/testctx"
@@ -47,6 +49,11 @@ var driverTestCases = []struct {
 		name:      "podman",
 		driver:    "image+podman",
 		provision: podmanSetup,
+	},
+	{
+		name:      "incus",
+		driver:    "image+incus",
+		provision: incusSetup,
 	},
 }
 
@@ -113,16 +120,15 @@ func (ProvisionSuite) TestImageDriverConfig(ctx context.Context, t *testctx.T) {
 			require.JSONEq(t, `{"engine": {"localCache": {"reservedSpace": 1000, "maxUsedSpace": 2000, "minFreeSpace": 3000}}}`, out)
 
 			// also, just for good measure, check that the file was propagated to the right place
-			ctrid, err := dockerc.WithExec([]string{tc.name, "ps", "-n1", "--format={{.ID}}"}).Stdout(ctx)
+			ctrid, err := runtimeContainerID(ctx, t, dockerc, tc.name)
 			require.NoError(t, err)
-			ctrid = strings.TrimSpace(ctrid)
 			require.NotEmpty(t, ctrid)
-			result, err := dockerc.WithExec([]string{tc.name, "exec", ctrid, "cat", "/etc/dagger/engine.json"}).Stdout(ctx)
+			result, err := runtimeContainerExec(ctx, t, dockerc, tc.name, ctrid, []string{"cat", "/etc/dagger/engine.json"})
 			require.NoError(t, err)
 			require.JSONEq(t, configContents, result)
 		})
 	}
-}
+	}
 
 func (ProvisionSuite) TestImageDriverCACerts(ctx context.Context, t *testctx.T) {
 	// tests that custom CA certs are properly propagated to the engine container when provisioned
@@ -150,16 +156,16 @@ FAKE CERTIFICATE DATA
 			out, err := dockerc.WithExec([]string{"dagger", "query", "-M"}, dagger.ContainerWithExecOpts{Stdin: `
 				query {
 					container {
-						from(address: "alpine:latest") {
-							standalone: withExec(args: ["cat", "/usr/local/share/ca-certificates/fake-ca.crt"]) {
-								stdout
-							}
-							bundle: withExec(args: ["cat", "/etc/ssl/certs/ca-certificates.crt"]) {
-								stdout
-							}
+					from(address: "alpine:latest") {
+						standalone: withExec(args: ["cat", "/usr/local/share/ca-certificates/fake-ca.crt"]) {
+							stdout
+						}
+						bundle: withExec(args: ["cat", "/etc/ssl/certs/ca-certificates.crt"]) {
+							stdout
 						}
 					}
 				}
+			}
 			`, InsecureRootCapabilities: true}).Stdout(ctx)
 			require.NoError(t, err)
 			require.Contains(t, gjson.Get(out, "container.from.standalone.stdout").String(), fakeCACert)
@@ -169,19 +175,6 @@ FAKE CERTIFICATE DATA
 }
 
 func (ProvisionSuite) TestImageDriverGarbageCollectEngines(ctx context.Context, t *testctx.T) {
-	dockerPs := func(ctx context.Context, t *testctx.T, dockerc *dagger.Container, cli string) []string {
-		out, err := dockerc.
-			WithEnvVariable("CACHEBUSTER", identity.NewID()).
-			WithExec([]string{cli, "ps", "-q"}).
-			Stdout(ctx)
-		require.NoError(t, err)
-		out = strings.TrimSpace(out)
-		if out == "" {
-			return []string{}
-		}
-		return strings.Split(out, "\n")
-	}
-
 	for _, tc := range driverTestCases {
 		t.Run(tc.name, func(ctx context.Context, t *testctx.T) {
 			t.Run("cleanup", func(ctx context.Context, t *testctx.T) {
@@ -189,19 +182,19 @@ func (ProvisionSuite) TestImageDriverGarbageCollectEngines(ctx context.Context, 
 				dockerc := tc.provision(ctx, t, c, containerSetupOpts{name: t.Name()})
 				dockerc = dockerc.WithMountedFile("/bin/dagger", daggerCliFile(t, c))
 
-				require.Len(t, dockerPs(ctx, t, dockerc, tc.name), 0)
+				require.Len(t, runtimeContainerNames(ctx, t, dockerc, tc.name), 0)
 
 				version := "v0.16.1"
 				first := dockerc.WithEnvVariable("_EXPERIMENTAL_DAGGER_RUNNER_HOST", tc.driver+"://registry.dagger.io/engine:"+version)
 				require.Equal(t, version, detectEngineVersion(ctx, t, first))
 
-				require.Len(t, dockerPs(ctx, t, dockerc, tc.name), 1)
+				require.Len(t, runtimeContainerNames(ctx, t, dockerc, tc.name), 1)
 
 				version = "v0.16.0"
 				second := dockerc.WithEnvVariable("_EXPERIMENTAL_DAGGER_RUNNER_HOST", tc.driver+"://registry.dagger.io/engine:"+version)
 				require.Equal(t, version, detectEngineVersion(ctx, t, second))
 
-				require.Len(t, dockerPs(ctx, t, dockerc, tc.name), 1)
+				require.Len(t, runtimeContainerNames(ctx, t, dockerc, tc.name), 1)
 			})
 
 			t.Run("no cleanup", func(ctx context.Context, t *testctx.T) {
@@ -215,19 +208,19 @@ func (ProvisionSuite) TestImageDriverGarbageCollectEngines(ctx context.Context, 
 				dockerc = dockerc.WithMountedFile("/bin/dagger", daggerCliFile(t, c))
 				dockerc = dockerc.WithEnvVariable("DAGGER_LEAVE_OLD_ENGINE", "true")
 
-				require.Len(t, dockerPs(ctx, t, dockerc, tc.name), 0)
+				require.Len(t, runtimeContainerNames(ctx, t, dockerc, tc.name), 0)
 
 				version := "v0.16.1"
 				first := dockerc.WithEnvVariable("_EXPERIMENTAL_DAGGER_RUNNER_HOST", tc.driver+"://registry.dagger.io/engine:"+version)
 				require.Equal(t, version, detectEngineVersion(ctx, t, first))
 
-				require.Len(t, dockerPs(ctx, t, dockerc, tc.name), 1)
+				require.Len(t, runtimeContainerNames(ctx, t, dockerc, tc.name), 1)
 
 				version = "v0.16.0"
 				second := dockerc.WithEnvVariable("_EXPERIMENTAL_DAGGER_RUNNER_HOST", tc.driver+"://registry.dagger.io/engine:"+version)
 				require.Equal(t, version, detectEngineVersion(ctx, t, second))
 
-				require.Len(t, dockerPs(ctx, t, dockerc, tc.name), 2)
+				require.Len(t, runtimeContainerNames(ctx, t, dockerc, tc.name), 2)
 			})
 		})
 	}
@@ -438,6 +431,22 @@ func doLoadEngine(ctx context.Context, dag *dagger.Client, ctr *dagger.Container
 	} else {
 		tarPath = "./bin/engine.tar"
 	}
+	if cli == "incus" {
+		loadBackend := imageload.Incus{}
+		loader, err := loadBackend.Loader(ctx)
+		if err != nil {
+			return nil, err
+		}
+		f, err := os.Open(tarPath)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		if err := loader.TarballWriter(ctx, engineTag, f); err != nil {
+			return nil, err
+		}
+		return ctr, nil
+	}
 	out, err := ctr.
 		WithMountedFile("engine.tar", dag.Host().File(tarPath)).
 		WithEnvVariable("CACHEBUSTER", rand.Text()).
@@ -457,6 +466,119 @@ func doLoadEngine(ctx context.Context, dag *dagger.Client, ctr *dagger.Container
 	}
 
 	return ctr, nil
+}
+
+func runtimeContainerNames(ctx context.Context, t *testctx.T, dockerc *dagger.Container, cli string) []string {
+	t.Helper()
+
+	if cli == "incus" {
+		out, err := dockerc.
+			WithEnvVariable("CACHEBUSTER", identity.NewID()).
+			WithExec([]string{"incus", "list", "--format", "json"}).
+			Stdout(ctx)
+		require.NoError(t, err)
+
+		var rows []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &rows))
+		names := make([]string, 0, len(rows))
+		for _, row := range rows {
+			if row.Name != "" && strings.HasPrefix(row.Name, "dagger-engine-") && strings.EqualFold(row.Status, "running") {
+				names = append(names, row.Name)
+			}
+		}
+		return names
+	}
+
+	out, err := dockerc.
+		WithEnvVariable("CACHEBUSTER", identity.NewID()).
+		WithExec([]string{cli, "ps", "-q"}).
+		Stdout(ctx)
+	require.NoError(t, err)
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return []string{}
+	}
+	return strings.Split(out, "\n")
+}
+
+func runtimeContainerID(ctx context.Context, t *testctx.T, dockerc *dagger.Container, cli string) (string, error) {
+	t.Helper()
+
+	names := runtimeContainerNames(ctx, t, dockerc, cli)
+	if len(names) == 0 {
+		return "", fmt.Errorf("no containers found for %s", cli)
+	}
+	return names[0], nil
+}
+
+func runtimeContainerExec(ctx context.Context, t *testctx.T, dockerc *dagger.Container, cli, name string, args []string) (string, error) {
+	t.Helper()
+
+	if cli == "incus" {
+		cmdArgs := append([]string{"incus", "exec", "-T", name, "--"}, args...)
+		return dockerc.WithExec(cmdArgs).Stdout(ctx)
+	}
+
+	cmdArgs := append([]string{cli, "exec", name}, args...)
+	return dockerc.WithExec(cmdArgs).Stdout(ctx)
+}
+
+func incusSetup(ctx context.Context, t *testctx.T, dag *dagger.Client, opts containerSetupOpts) *dagger.Container {
+	middleware := opts.middleware
+	if middleware == nil {
+		middleware = func(ctr *dagger.Container) *dagger.Container {
+			return ctr
+		}
+	}
+
+	incusBin, err := exec.LookPath("incus")
+	if err != nil {
+		t.Skip("incus binary not available")
+	}
+
+	socketPath, ok := incusSocketPath()
+	if !ok {
+		t.Skip("incus unix socket not available")
+	}
+
+	base := dag.Container().
+		From("ubuntu:24.04").
+		With(middleware).
+		WithMountedFile("/usr/local/bin/incus", dag.Host().File(incusBin)).
+		WithUnixSocket("/run/incus.sock", dag.Host().UnixSocket(socketPath)).
+		WithEnvVariable("INCUS_SOCKET", "/run/incus.sock").
+		WithEnvVariable("PATH", "/usr/local/bin:/usr/bin:/bin").
+		WithEnvVariable("CACHEBUSTER", identity.NewID()).
+		WithWorkdir("/work")
+
+	_, err = base.WithExec([]string{"incus", "info"}).Sync(ctx)
+	if err != nil {
+		t.Skipf("incus client cannot reach the host daemon from the test container: %v", err)
+	}
+
+	return base
+}
+
+func incusSocketPath() (string, bool) {
+	candidates := []string{}
+	if v, ok := os.LookupEnv("INCUS_SOCKET"); ok {
+		candidates = append(candidates, v)
+	}
+	candidates = append(candidates,
+		"/var/lib/incus/unix.socket",
+		"/run/incus/unix.socket",
+		"/var/snap/incus/common/incus/unix.socket",
+	)
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // mountDockerConfig is a helper for mounting the host's docker config if it exists

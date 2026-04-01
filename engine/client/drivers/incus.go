@@ -1,0 +1,301 @@
+package drivers
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/adrg/xdg"
+	"github.com/dagger/dagger/engine/client/imageload"
+	"github.com/dagger/dagger/engine/distconsts"
+	"github.com/dagger/dagger/util/traceexec"
+	telemetry "github.com/dagger/otel-go"
+	"github.com/docker/cli/cli/connhelper/commandconn"
+)
+
+type incus struct{}
+
+var _ containerBackend = incus{}
+
+const incusDockerRemote = "docker"
+
+var incusHostStateDir = filepath.Join(xdg.DataHome, "dagger", "incus")
+
+type incusRemote struct {
+	Name string `json:"name"`
+}
+
+func (incus) Available(ctx context.Context) (bool, error) {
+	if _, err := exec.LookPath("incus"); err != nil {
+		return false, nil //nolint:nilerr
+	}
+	cmd := exec.CommandContext(ctx, "incus", "info")
+	if err := traceexec.Exec(ctx, cmd, telemetry.Encapsulated()); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (incus) ImagePull(ctx context.Context, image string) error {
+	if err := ensureIncusDockerRemote(ctx); err != nil {
+		return err
+	}
+	alias := incusImageAlias(image)
+	exists, err := incusImageExists(ctx, alias)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+
+	source := incusRemoteImageRef(image)
+	args := []string{"image", "copy", source, "local:", "--alias", alias}
+	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", args...), telemetry.Encapsulated())
+}
+
+func (incus) ImageExists(ctx context.Context, image string) (bool, error) {
+	return incusImageExists(ctx, incusImageAlias(image))
+}
+
+func (incus) ImageRemove(ctx context.Context, image string) error {
+	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "image", "delete", "local:"+incusImageAlias(image)))
+}
+
+func (incus) ImageLoader(ctx context.Context) imageload.Backend {
+	return imageload.Incus{}
+}
+
+func (incus) ContainerRun(ctx context.Context, name string, opts runOpts) error {
+	if opts.gpus {
+		return fmt.Errorf("incus backend does not currently support GPU passthrough")
+	}
+	if err := ensureIncusDockerRemote(ctx); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(incusHostStateDir, 0o755); err != nil {
+		return err
+	}
+
+	alias := incusImageAlias(opts.image)
+	exists, err := incusImageExists(ctx, alias)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if err := incus{}.ImagePull(ctx, opts.image); err != nil {
+			return err
+		}
+	}
+
+	args := []string{"launch", "local:" + alias, name}
+	args = append(args, "-c", "security.nesting=true")
+	if opts.privileged {
+		args = append(args, "-c", "security.privileged=true")
+	}
+	if opts.cpus != "" {
+		args = append(args, "-c", "limits.cpu="+opts.cpus)
+	}
+	if opts.memory != "" {
+		args = append(args, "-c", "limits.memory="+opts.memory)
+	}
+
+	stateDir, err := incusStateVolumeDir(name)
+	if err != nil {
+		return err
+	}
+	args = append(args, "-d", "dagger-state,type=disk,source="+stateDir+",path="+distconsts.EngineDefaultStateDir)
+
+	if cfgDir, ok, err := incusConfigDir(); err != nil {
+		return err
+	} else if ok {
+		args = append(args, "-d", "dagger-config,type=disk,source="+cfgDir+",path="+filepath.Join("/root", ".config", "dagger"))
+	}
+
+	for _, env := range opts.env {
+		k, v, ok := strings.Cut(env, "=")
+		if !ok {
+			v = ""
+		}
+		args = append(args, "-c", "environment."+k+"="+v)
+	}
+
+	for _, port := range opts.ports {
+		hostPort, containerPort, ok := strings.Cut(port, ":")
+		if !ok {
+			hostPort = port
+			containerPort = port
+		}
+		args = append(args, "-d", "dagger-port-"+hostPort+",type=proxy,listen=tcp:127.0.0.1:"+hostPort+",connect=tcp:127.0.0.1:"+containerPort)
+	}
+
+	args = append(args, "--")
+	args = append(args, opts.args...)
+
+	cmd := exec.CommandContext(ctx, "incus", args...)
+	_, stderr, err := traceexec.ExecOutput(ctx, cmd, telemetry.Encapsulated())
+	if err != nil {
+		if isIncusAlreadyExistsOutput(stderr) {
+			return errContainerAlreadyExists
+		}
+		return err
+	}
+	return nil
+}
+
+func (incus) ContainerExec(ctx context.Context, name string, args []string) (string, string, error) {
+	cmdArgs := append([]string{"exec", "-T", name, "--"}, args...)
+	return traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", cmdArgs...))
+}
+
+func (incus) ContainerDial(ctx context.Context, name string, args []string) (net.Conn, error) {
+	cmdArgs := append([]string{"exec", "-T", name, "--"}, args...)
+	return commandconn.New(ctx, "incus", cmdArgs...)
+}
+
+func (incus) ContainerRemove(ctx context.Context, name string) error {
+	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "delete", "-f", name))
+}
+
+func (i incus) ContainerStart(ctx context.Context, name string) error {
+	running, err := i.containerIsRunning(ctx, name)
+	if err != nil {
+		return err
+	}
+	if running {
+		return nil
+	}
+	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "start", name), telemetry.Encapsulated())
+}
+
+func (incus) ContainerExists(ctx context.Context, name string) (bool, error) {
+	_, stderr, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "info", name), telemetry.Encapsulated())
+	if err == nil {
+		return true, nil
+	}
+	if isIncusNotFoundOutput(stderr) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (incus) ContainerLs(ctx context.Context) ([]string, error) {
+	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "list", "--format", "json"))
+	if err != nil {
+		return nil, err
+	}
+	var result []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(result))
+	for _, res := range result {
+		if res.Name != "" {
+			ids = append(ids, res.Name)
+		}
+	}
+	return ids, nil
+}
+
+func (i incus) containerIsRunning(ctx context.Context, name string) (bool, error) {
+	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "list", name, "--format", "json"))
+	if err != nil {
+		return false, err
+	}
+	var result []struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		return false, err
+	}
+	for _, res := range result {
+		if res.Name == name {
+			return strings.EqualFold(res.Status, "running"), nil
+		}
+	}
+	return false, nil
+}
+
+func incusImageAlias(image string) string {
+	sum := sha256.Sum256([]byte(image))
+	return "dagger-" + hex.EncodeToString(sum[:8])
+}
+
+func incusRemoteImageRef(image string) string {
+	if strings.Contains(image, "://") || strings.HasPrefix(image, "local:") || strings.HasPrefix(image, "docker:") || strings.HasPrefix(image, "images:") {
+		return image
+	}
+	return "docker:" + image
+}
+
+func incusImageExists(ctx context.Context, alias string) (bool, error) {
+	_, stderr, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "image", "info", "local:"+alias), telemetry.Encapsulated())
+	if err == nil {
+		return true, nil
+	}
+	if isIncusNotFoundOutput(stderr) {
+		return false, nil
+	}
+	return false, err
+}
+
+func ensureIncusDockerRemote(ctx context.Context) error {
+	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "remote", "list", "--format", "json"))
+	if err == nil {
+		var remotes []incusRemote
+		if json.Unmarshal([]byte(stdout), &remotes) == nil {
+			for _, remote := range remotes {
+				if remote.Name == incusDockerRemote {
+					return nil
+				}
+			}
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, "incus", "remote", "add", incusDockerRemote, "https://docker.io", "--protocol=oci")
+	_, stderr, err := traceexec.ExecOutput(ctx, cmd, telemetry.Encapsulated())
+	if err != nil && !strings.Contains(strings.ToLower(stderr), "already exists") {
+		return err
+	}
+	return nil
+}
+
+func incusConfigDir() (string, bool, error) {
+	dir := filepath.Join(xdg.ConfigHome, "dagger")
+	if _, err := os.Stat(dir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return dir, true, nil
+}
+
+func incusStateVolumeDir(name string) (string, error) {
+	dir := filepath.Join(incusHostStateDir, "volumes", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func isIncusAlreadyExistsOutput(output string) bool {
+	output = strings.ToLower(output)
+	return strings.Contains(output, "already exists") || strings.Contains(output, "instance already exists")
+}
+
+func isIncusNotFoundOutput(output string) bool {
+	output = strings.ToLower(output)
+	return strings.Contains(output, "not found") || strings.Contains(output, "not found in project")
+}

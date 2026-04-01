@@ -35,6 +35,10 @@ var backends = []struct {
 		name:    "apple",
 		backend: apple{},
 	},
+	{
+		name:    "incus",
+		backend: incus{},
+	},
 }
 
 var _, shouldRun = os.LookupEnv("DRIVER_TEST")
@@ -46,6 +50,11 @@ func TestBackendImagePullAndExists(t *testing.T) {
 
 	for _, tc := range backends {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "incus" {
+				if _, err := exec.LookPath("incus"); err != nil {
+					t.Skip("incus binary not available")
+				}
+			}
 			ctx := t.Context()
 
 			testImage := "alpine:3.18"
@@ -75,6 +84,9 @@ func TestBackendImageLoadAndExists(t *testing.T) {
 	}
 
 	for _, tc := range backends {
+		if tc.name == "incus" {
+			continue
+		}
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 
@@ -122,6 +134,63 @@ func TestBackendImageLoadAndExists(t *testing.T) {
 	}
 }
 
+func TestBackendIncusImageLoadAndExists(t *testing.T) {
+	if !shouldRun {
+		t.Skip()
+	}
+
+	ctx := t.Context()
+	tc := struct {
+		name    string
+		backend containerBackend
+	}{
+		name:    "incus",
+		backend: incus{},
+	}
+
+	t.Run(tc.name, func(t *testing.T) {
+		if _, err := exec.LookPath("incus"); err != nil {
+			t.Skip("incus binary not available")
+		}
+		testImage := "alpine:3.18"
+		loadedImageName := "test-loaded-alpine:custom"
+		_ = tc.backend.ImageRemove(ctx, testImage)
+		_ = tc.backend.ImageRemove(ctx, loadedImageName)
+
+		existsBefore, err := tc.backend.ImageExists(ctx, testImage)
+		require.NoError(t, err)
+		require.False(t, existsBefore)
+
+		err = tc.backend.ImagePull(ctx, testImage)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			ctx := context.WithoutCancel(ctx)
+			require.NoError(t, tc.backend.ImageRemove(ctx, testImage))
+			require.NoError(t, tc.backend.ImageRemove(ctx, loadedImageName))
+		})
+
+		existsAfter, err := tc.backend.ImageExists(ctx, testImage)
+		require.NoError(t, err)
+		require.True(t, existsAfter)
+
+		loadBackend := tc.backend.ImageLoader(ctx)
+		require.NotNil(t, loadBackend)
+		loader, err := loadBackend.Loader(ctx)
+		require.NoError(t, err)
+
+		var tarballBuffer bytes.Buffer
+		err = loader.TarballReader(ctx, testImage, &tarballBuffer)
+		require.NoError(t, err)
+
+		err = loader.TarballWriter(ctx, loadedImageName, bytes.NewReader(tarballBuffer.Bytes()))
+		require.NoError(t, err)
+
+		existsLoaded, err := tc.backend.ImageExists(ctx, loadedImageName)
+		require.NoError(t, err)
+		require.True(t, existsLoaded)
+	})
+}
+
 func TestBackendContainerRunExec(t *testing.T) {
 	if !shouldRun {
 		t.Skip()
@@ -129,6 +198,11 @@ func TestBackendContainerRunExec(t *testing.T) {
 
 	for _, tc := range backends {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "incus" {
+				if _, err := exec.LookPath("incus"); err != nil {
+					t.Skip("incus binary not available")
+				}
+			}
 			ctx := t.Context()
 			containerName := "test-run-exec-container"
 			testImage := "alpine:3.18"
@@ -184,6 +258,11 @@ func TestBackendContainerLs(t *testing.T) {
 
 	for _, tc := range backends {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "incus" {
+				if _, err := exec.LookPath("incus"); err != nil {
+					t.Skip("incus binary not available")
+				}
+			}
 			ctx := t.Context()
 			testImage := "alpine:3.18"
 			containers := []string{"test-ls-container-1", "test-ls-container-2"}
