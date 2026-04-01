@@ -26,11 +26,15 @@ type incus struct{}
 var _ containerBackend = incus{}
 
 const incusDockerRemote = "docker"
+const incusDockerRemoteURL = "https://docker.io"
+const incusDockerRemoteProtocol = "oci"
 
 var incusHostStateDir = filepath.Join(xdg.DataHome, "dagger", "incus")
 
 type incusRemote struct {
-	Name string `json:"name"`
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"`
+	URL      string `json:"url"`
 }
 
 func (incus) Available(ctx context.Context) (bool, error) {
@@ -257,18 +261,45 @@ func ensureIncusDockerRemote(ctx context.Context) error {
 		if json.Unmarshal([]byte(stdout), &remotes) == nil {
 			for _, remote := range remotes {
 				if remote.Name == incusDockerRemote {
-					return nil
+					if isExpectedIncusDockerRemote(remote) {
+						return nil
+					}
+					return fmt.Errorf("incus remote %q already exists but with different configuration: protocol=%q url=%q", incusDockerRemote, remote.Protocol, remote.URL)
 				}
 			}
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "incus", "remote", "add", incusDockerRemote, "https://docker.io", "--protocol=oci")
+	cmd := exec.CommandContext(ctx, "incus", "remote", "add", incusDockerRemote, incusDockerRemoteURL, "--protocol="+incusDockerRemoteProtocol)
 	_, stderr, err := traceexec.ExecOutput(ctx, cmd, telemetry.Encapsulated())
-	if err != nil && !strings.Contains(strings.ToLower(stderr), "already exists") {
-		return err
+	if err != nil {
+		if !strings.Contains(strings.ToLower(stderr), "already exists") {
+			return err
+		}
+		stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "remote", "list", "--format", "json"))
+		if err != nil {
+			return err
+		}
+		var remotes []incusRemote
+		if err := json.Unmarshal([]byte(stdout), &remotes); err != nil {
+			return err
+		}
+		for _, remote := range remotes {
+			if remote.Name == incusDockerRemote {
+				if isExpectedIncusDockerRemote(remote) {
+					return nil
+				}
+				return fmt.Errorf("incus remote %q already exists but with different configuration: protocol=%q url=%q", incusDockerRemote, remote.Protocol, remote.URL)
+			}
+		}
+		return fmt.Errorf("incus remote %q already exists but could not be verified", incusDockerRemote)
 	}
 	return nil
+}
+
+func isExpectedIncusDockerRemote(remote incusRemote) bool {
+	return strings.EqualFold(remote.Protocol, incusDockerRemoteProtocol) &&
+		(remote.URL == incusDockerRemoteURL || remote.URL == "docker.io")
 }
 
 func incusConfigDir() (string, bool, error) {

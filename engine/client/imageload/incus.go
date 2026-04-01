@@ -2,7 +2,6 @@ package imageload
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -13,7 +12,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -92,33 +93,64 @@ func (loader Incus) saveTarball(ctx context.Context, name string, tarball io.Wri
 		return fmt.Errorf("incus image export failed: %w", err)
 	}
 
-	entries, err := os.ReadDir(outDir)
-	if err != nil {
+	gw := gzip.NewWriter(tarball)
+	tw := tar.NewWriter(gw)
+	if err := filepath.Walk(outDir, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if p == outDir {
+			return nil
+		}
+		rel, err := filepath.Rel(outDir, p)
+		if err != nil {
+			return err
+		}
+		hdr, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		hdr.Name = filepath.ToSlash(rel)
+		if info.IsDir() {
+			hdr.Name += "/"
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			hdr, err = tar.FileInfoHeader(info, link)
+			if err != nil {
+				return err
+			}
+			hdr.Name = filepath.ToSlash(rel)
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			f, err := os.Open(p)
+			if err != nil {
+				return err
+			}
+			_, copyErr := io.Copy(tw, f)
+			closeErr := f.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			return closeErr
+		}
+		return nil
+	}); err != nil {
+		_ = tw.Close()
+		_ = gw.Close()
 		return err
 	}
-
-	var filePath string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if filePath != "" {
-			return fmt.Errorf("incus image export produced multiple files in %s; unsupported", outDir)
-		}
-		filePath = filepath.Join(outDir, entry.Name())
-	}
-	if filePath == "" {
-		return fmt.Errorf("incus image export produced no files in %s", outDir)
-	}
-
-	f, err := os.Open(filePath)
-	if err != nil {
+	if err := tw.Close(); err != nil {
+		_ = gw.Close()
 		return err
 	}
-	defer f.Close()
-
-	_, err = io.Copy(tarball, f)
-	if err != nil {
+	if err := gw.Close(); err != nil {
 		return err
 	}
 	return nil
@@ -143,13 +175,22 @@ type dockerImageConfig struct {
 
 type imageArchive struct {
 	cfg    dockerImageConfig
-	layers [][]byte
+	layers []string
+	cleanup func()
+}
+
+type archiveIndex struct {
+	dir   string
+	files map[string]string
 }
 
 func imageArchiveToIncusTarball(sourcePath, alias string) (_ string, rerr error) {
 	archive, err := parseImageArchive(sourcePath)
 	if err != nil {
 		return "", err
+	}
+	if archive.cleanup != nil {
+		defer archive.cleanup()
 	}
 
 	tempDir, err := os.MkdirTemp("", "dagger-incus-rootfs-*")
@@ -160,14 +201,10 @@ func imageArchiveToIncusTarball(sourcePath, alias string) (_ string, rerr error)
 	if err := os.MkdirAll(rootfsDir, 0o755); err != nil {
 		return "", err
 	}
-	defer func() {
-		if rerr != nil {
-			_ = os.RemoveAll(tempDir)
-		}
-	}()
+	defer os.RemoveAll(tempDir)
 
-	for _, layerBytes := range archive.layers {
-		if err := unpackLayer(rootfsDir, layerBytes); err != nil {
+	for _, layerPath := range archive.layers {
+		if err := unpackLayer(rootfsDir, layerPath); err != nil {
 			return "", err
 		}
 	}
@@ -208,7 +245,14 @@ func imageArchiveToIncusTarball(sourcePath, alias string) (_ string, rerr error)
 		if info.IsDir() {
 			name += "/"
 		}
-		hdr, err := tar.FileInfoHeader(info, "")
+		link := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err = os.Readlink(p)
+			if err != nil {
+				return err
+			}
+		}
+		hdr, err := tar.FileInfoHeader(info, link)
 		if err != nil {
 			return err
 		}
@@ -241,19 +285,35 @@ func imageArchiveToIncusTarball(sourcePath, alias string) (_ string, rerr error)
 	return outFile.Name(), nil
 }
 
-func parseImageArchive(sourcePath string) (*imageArchive, error) {
-	if archive, err := parseOCIImageArchive(sourcePath); err == nil {
+func parseImageArchive(sourcePath string) (archive *imageArchive, rerr error) {
+	index, err := indexImageArchive(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if rerr != nil {
+			index.close()
+		}
+	}()
+
+	if archive, err := parseOCIImageArchive(index); err == nil {
+		archive.cleanup = index.close
 		return archive, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 
-	return parseDockerImageArchive(sourcePath)
+	archive, err = parseDockerImageArchive(index)
+	if err != nil {
+		return nil, err
+	}
+	archive.cleanup = index.close
+	return archive, nil
 }
 
-func parseDockerImageArchive(sourcePath string) (*imageArchive, error) {
+func parseDockerImageArchive(index *archiveIndex) (*imageArchive, error) {
 	var manifestBytes []byte
-	if err := readArchiveFile(sourcePath, "manifest.json", &manifestBytes); err != nil {
+	if err := readArchiveFile(index, "manifest.json", &manifestBytes); err != nil {
 		return nil, err
 	}
 
@@ -262,12 +322,15 @@ func parseDockerImageArchive(sourcePath string) (*imageArchive, error) {
 		return nil, err
 	}
 	if len(manifests) == 0 {
-		return nil, fmt.Errorf("manifest.json in %s is empty", sourcePath)
+		return nil, fmt.Errorf("manifest.json in %s is empty", index.dir)
 	}
-	manifest := manifests[0]
+	manifest, err := selectDockerManifest(index, manifests)
+	if err != nil {
+		return nil, err
+	}
 
 	var configBytes []byte
-	if err := readArchiveFile(sourcePath, manifest.Config, &configBytes); err != nil {
+	if err := readArchiveFile(index, manifest.Config, &configBytes); err != nil {
 		return nil, err
 	}
 
@@ -275,61 +338,77 @@ func parseDockerImageArchive(sourcePath string) (*imageArchive, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !imageConfigMatchesHost(cfg) {
+		return nil, fmt.Errorf("docker image in %s does not match host platform %s/%s", index.dir, runtime.GOOS, normalizeIncusArchitecture(runtime.GOARCH))
+	}
 
-	layers := make([][]byte, 0, len(manifest.Layers))
+	layers := make([]string, 0, len(manifest.Layers))
 	for _, layerName := range manifest.Layers {
-		var layerBytes []byte
-		if err := readArchiveFile(sourcePath, layerName, &layerBytes); err != nil {
+		layerPath, err := index.file(layerName)
+		if err != nil {
 			return nil, err
 		}
-		layers = append(layers, layerBytes)
+		layers = append(layers, layerPath)
 	}
 
-	return &imageArchive{cfg: cfg, layers: layers}, nil
+	return &imageArchive{cfg: cfg, layers: layers, cleanup: index.close}, nil
 }
 
-func parseOCIImageArchive(sourcePath string) (*imageArchive, error) {
+func parseOCIImageArchive(index *archiveIndex) (*imageArchive, error) {
 	var indexBytes []byte
-	if err := readArchiveFile(sourcePath, "index.json", &indexBytes); err != nil {
+	if err := readArchiveFile(index, "index.json", &indexBytes); err != nil {
 		return nil, err
 	}
 
-	var index ocispecs.Index
-	if err := json.Unmarshal(indexBytes, &index); err != nil {
+	var ociIndex ocispecs.Index
+	if err := json.Unmarshal(indexBytes, &ociIndex); err != nil {
 		return nil, err
 	}
-	if len(index.Manifests) == 0 {
-		return nil, fmt.Errorf("index.json in %s is empty", sourcePath)
+	if len(ociIndex.Manifests) == 0 {
+		return nil, fmt.Errorf("index.json in %s is empty", index.dir)
 	}
 
-	return parseOCIManifestDescriptor(sourcePath, index.Manifests[0])
+	desc, err := selectOCIManifestDescriptor(ociIndex)
+	if err != nil {
+		return nil, err
+	}
+
+	archive, err := parseOCIManifestDescriptor(index, desc)
+	if err != nil {
+		return nil, err
+	}
+	return archive, nil
 }
 
-func parseOCIManifestDescriptor(sourcePath string, desc ocispecs.Descriptor) (*imageArchive, error) {
+func parseOCIManifestDescriptor(index *archiveIndex, desc ocispecs.Descriptor) (*imageArchive, error) {
 	var manifestBytes []byte
-	if err := readArchiveFile(sourcePath, filepath.Join("blobs", "sha256", desc.Digest.Encoded()), &manifestBytes); err != nil {
+	if err := readArchiveFile(index, filepath.Join("blobs", "sha256", desc.Digest.Encoded()), &manifestBytes); err != nil {
 		return nil, err
 	}
 
 	var manifest ocispecs.Manifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err == nil && manifest.Config.Digest.String() != "" {
-		return parseOCIManifest(sourcePath, manifest)
+		return parseOCIManifest(index, manifest)
 	}
 
-	var index ocispecs.Index
-	if err := json.Unmarshal(manifestBytes, &index); err == nil {
-		if len(index.Manifests) == 0 {
-			return nil, fmt.Errorf("nested index in %s is empty", sourcePath)
+	var nestedIndex ocispecs.Index
+	if err := json.Unmarshal(manifestBytes, &nestedIndex); err == nil {
+		if len(nestedIndex.Manifests) == 0 {
+			return nil, fmt.Errorf("nested index in %s is empty", index.dir)
 		}
-		return parseOCIManifestDescriptor(sourcePath, index.Manifests[0])
+		desc, err := selectOCIManifestDescriptor(nestedIndex)
+		if err != nil {
+			return nil, err
+		}
+		return parseOCIManifestDescriptor(index, desc)
 	}
 
-	return nil, fmt.Errorf("unsupported OCI manifest blob %s in %s", desc.Digest.String(), sourcePath)
+	return nil, fmt.Errorf("unsupported OCI manifest blob %s in %s", desc.Digest.String(), index.dir)
 }
 
-func parseOCIManifest(sourcePath string, manifest ocispecs.Manifest) (*imageArchive, error) {
+func parseOCIManifest(index *archiveIndex, manifest ocispecs.Manifest) (*imageArchive, error) {
 	var configBytes []byte
-	if err := readArchiveFile(sourcePath, filepath.Join("blobs", "sha256", manifest.Config.Digest.Encoded()), &configBytes); err != nil {
+	if err := readArchiveFile(index, filepath.Join("blobs", "sha256", manifest.Config.Digest.Encoded()), &configBytes); err != nil {
 		return nil, err
 	}
 
@@ -337,14 +416,17 @@ func parseOCIManifest(sourcePath string, manifest ocispecs.Manifest) (*imageArch
 	if err != nil {
 		return nil, err
 	}
+	if !imageConfigMatchesHost(cfg) {
+		return nil, fmt.Errorf("OCI image in %s does not match host platform %s/%s", index.dir, runtime.GOOS, normalizeIncusArchitecture(runtime.GOARCH))
+	}
 
-	layers := make([][]byte, 0, len(manifest.Layers))
+	layers := make([]string, 0, len(manifest.Layers))
 	for _, layer := range manifest.Layers {
-		var layerBytes []byte
-		if err := readArchiveFile(sourcePath, filepath.Join("blobs", "sha256", layer.Digest.Encoded()), &layerBytes); err != nil {
+		layerPath, err := index.file(filepath.Join("blobs", "sha256", layer.Digest.Encoded()))
+		if err != nil {
 			return nil, err
 		}
-		layers = append(layers, layerBytes)
+		layers = append(layers, layerPath)
 	}
 
 	return &imageArchive{cfg: cfg, layers: layers}, nil
@@ -358,45 +440,46 @@ func parseDockerImageConfig(configBytes []byte) (dockerImageConfig, error) {
 	return cfg, nil
 }
 
-func readArchiveFile(sourcePath, target string, dst *[]byte) error {
-	f, err := os.Open(sourcePath)
+func readArchiveFile(index *archiveIndex, target string, dst *[]byte) error {
+	filePath, err := index.file(target)
+	if err != nil {
+		return err
+	}
+	b, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+	*dst = b
+	return nil
+}
+
+func unpackLayer(rootfs string, layerPath string) error {
+	f, err := os.Open(layerPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	tr := tar.NewReader(f)
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
+	buf := make([]byte, 2)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return err
+	}
+	if n == 2 && buf[0] == 0x1f && buf[1] == 0x8b {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		if hdr.Name == target || filepath.Base(hdr.Name) == target {
-			b, err := io.ReadAll(tr)
-			if err != nil {
-				return err
-			}
-			*dst = b
-			return nil
-		}
-	}
-	return fmt.Errorf("file %q not found in %s: %w", target, sourcePath, os.ErrNotExist)
-}
-
-func unpackLayer(rootfs string, layerBytes []byte) error {
-	r := bytes.NewReader(layerBytes)
-	if len(layerBytes) >= 2 && layerBytes[0] == 0x1f && layerBytes[1] == 0x8b {
-		gr, err := gzip.NewReader(r)
+		gr, err := gzip.NewReader(f)
 		if err != nil {
 			return err
 		}
 		defer gr.Close()
 		return untarInto(rootfs, gr)
 	}
-	return untarInto(rootfs, r)
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	return untarInto(rootfs, f)
 }
 
 func untarInto(rootfs string, r io.Reader) error {
@@ -410,7 +493,10 @@ func untarInto(rootfs string, r io.Reader) error {
 			return err
 		}
 
-		target := filepath.Join(rootfs, filepath.Clean(hdr.Name))
+		target, err := safeExtractPath(rootfs, hdr.Name)
+		if err != nil {
+			return err
+		}
 		base := filepath.Base(hdr.Name)
 		dir := filepath.Dir(target)
 
@@ -450,7 +536,11 @@ func untarInto(rootfs string, r io.Reader) error {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return err
 			}
-			if err := os.Link(filepath.Join(rootfs, hdr.Linkname), target); err != nil && !os.IsExist(err) {
+			linkTarget, err := safeExtractPath(rootfs, hdr.Linkname)
+			if err != nil {
+				return err
+			}
+			if err := os.Link(linkTarget, target); err != nil && !os.IsExist(err) {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
@@ -475,9 +565,13 @@ func untarInto(rootfs string, r io.Reader) error {
 }
 
 func buildMetadataYAML(alias string, cfg dockerImageConfig) string {
-	arch := cfg.Architecture
+	arch := normalizeIncusArchitecture(cfg.Architecture)
 	if arch == "" {
-		arch = "amd64"
+		arch = normalizeIncusArchitecture(runtime.GOARCH)
+	}
+	osName := cfg.OS
+	if osName == "" {
+		osName = runtime.GOOS
 	}
 	created := time.Now().Unix()
 	if cfg.Created != nil {
@@ -489,11 +583,236 @@ func buildMetadataYAML(alias string, cfg dockerImageConfig) string {
 		"creation_date": created,
 		"properties": map[string]string{
 			"description": alias,
-			"os":          cfg.OS,
+			"os":          osName,
 		},
 	}
 	b, _ := yaml.Marshal(metadata)
 	return string(b)
+}
+
+func normalizeIncusArchitecture(arch string) string {
+	switch arch {
+	case "amd64":
+		return "x86_64"
+	case "arm64":
+		return "aarch64"
+	case "386":
+		return "i686"
+	case "arm":
+		return "armhf"
+	default:
+		return arch
+	}
+}
+
+func selectDockerManifest(index *archiveIndex, manifests []dockerManifestEntry) (dockerManifestEntry, error) {
+	if len(manifests) == 1 {
+		return manifests[0], nil
+	}
+
+	for _, manifest := range manifests {
+		var configBytes []byte
+		if err := readArchiveFile(index, manifest.Config, &configBytes); err != nil {
+			continue
+		}
+		cfg, err := parseDockerImageConfig(configBytes)
+		if err != nil {
+			continue
+		}
+		if imageConfigMatchesHost(cfg) {
+			return manifest, nil
+		}
+	}
+
+	return dockerManifestEntry{}, fmt.Errorf("no manifest in %s matches host platform %s/%s", index.dir, runtime.GOOS, normalizeIncusArchitecture(runtime.GOARCH))
+}
+
+func selectOCIManifestDescriptor(index ocispecs.Index) (ocispecs.Descriptor, error) {
+	if len(index.Manifests) == 1 {
+		desc := index.Manifests[0]
+		if desc.Platform == nil {
+			return desc, nil
+		}
+		if desc.Platform.OS != "" && desc.Platform.OS != runtime.GOOS {
+			return ocispecs.Descriptor{}, fmt.Errorf("no OCI manifest in index matches host platform %s/%s", runtime.GOOS, normalizeIncusArchitecture(runtime.GOARCH))
+		}
+		if desc.Platform.Architecture != "" && normalizeIncusArchitecture(desc.Platform.Architecture) != normalizeIncusArchitecture(runtime.GOARCH) {
+			return ocispecs.Descriptor{}, fmt.Errorf("no OCI manifest in index matches host platform %s/%s", runtime.GOOS, normalizeIncusArchitecture(runtime.GOARCH))
+		}
+		return desc, nil
+	}
+
+	hostArch := normalizeIncusArchitecture(runtime.GOARCH)
+	for _, desc := range index.Manifests {
+		if desc.Platform == nil {
+			continue
+		}
+		if desc.Platform.OS != "" && desc.Platform.OS != runtime.GOOS {
+			continue
+		}
+		if desc.Platform.Architecture != "" && normalizeIncusArchitecture(desc.Platform.Architecture) != hostArch {
+			continue
+		}
+		return desc, nil
+	}
+
+	return ocispecs.Descriptor{}, fmt.Errorf("no OCI manifest in index matches host platform %s/%s", runtime.GOOS, hostArch)
+}
+
+func imageConfigMatchesHost(cfg dockerImageConfig) bool {
+	if cfg.OS != "" && cfg.OS != runtime.GOOS {
+		return false
+	}
+	if cfg.Architecture != "" && normalizeIncusArchitecture(cfg.Architecture) != normalizeIncusArchitecture(runtime.GOARCH) {
+		return false
+	}
+	return true
+}
+
+func indexImageArchive(sourcePath string) (*archiveIndex, error) {
+	dir, err := os.MkdirTemp("", "dagger-incus-archive-*")
+	if err != nil {
+		return nil, err
+	}
+
+	index := &archiveIndex{
+		dir:   dir,
+		files: map[string]string{},
+	}
+
+	f, err := os.Open(sourcePath)
+	if err != nil {
+		index.close()
+		return nil, err
+	}
+	defer f.Close()
+
+	var reader io.Reader = f
+	magic := make([]byte, 2)
+	n, err := io.ReadFull(f, magic)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		index.close()
+		return nil, err
+	}
+	if n == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			index.close()
+			return nil, err
+		}
+		gr, err := gzip.NewReader(f)
+		if err != nil {
+			index.close()
+			return nil, err
+		}
+		defer gr.Close()
+		reader = gr
+	} else if _, err := f.Seek(0, io.SeekStart); err != nil {
+		index.close()
+		return nil, err
+	}
+
+	tr := tar.NewReader(reader)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			index.close()
+			return nil, err
+		}
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+			continue
+		}
+
+		name := normalizeArchiveName(hdr.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := index.files[name]; ok {
+			index.close()
+			return nil, fmt.Errorf("duplicate archive entry %q in %s", hdr.Name, sourcePath)
+		}
+
+		target := filepath.Join(dir, fmt.Sprintf("%x", sha256.Sum256([]byte(name))))
+		out, err := os.Create(target)
+		if err != nil {
+			index.close()
+			return nil, err
+		}
+		if _, err := io.Copy(out, tr); err != nil {
+			_ = out.Close()
+			index.close()
+			return nil, err
+		}
+		if err := out.Close(); err != nil {
+			index.close()
+			return nil, err
+		}
+		for _, key := range []string{hdr.Name, name} {
+			if key == "" {
+				continue
+			}
+			if existing, ok := index.files[key]; ok && existing != target {
+				index.close()
+				return nil, fmt.Errorf("duplicate archive entry %q in %s", key, sourcePath)
+			}
+			index.files[key] = target
+		}
+	}
+
+	return index, nil
+}
+
+func (a *archiveIndex) close() {
+	if a == nil || a.dir == "" {
+		return
+	}
+	_ = os.RemoveAll(a.dir)
+}
+
+func (a *archiveIndex) file(target string) (string, error) {
+	if a == nil {
+		return "", os.ErrNotExist
+	}
+	for _, key := range []string{target, normalizeArchiveName(target)} {
+		if key == "" {
+			continue
+		}
+		if p, ok := a.files[key]; ok {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("file %q not found in archive: %w", target, os.ErrNotExist)
+}
+
+func normalizeArchiveName(name string) string {
+	name = strings.TrimSpace(strings.TrimPrefix(name, "./"))
+	name = strings.TrimPrefix(name, "/")
+	name = path.Clean(name)
+	if name == "." || name == "" {
+		return ""
+	}
+	return name
+}
+
+func safeExtractPath(rootfs, name string) (string, error) {
+	cleaned := normalizeArchiveName(name)
+	if cleaned == "" {
+		return "", fmt.Errorf("illegal file path: %q", name)
+	}
+	if strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+		return "", fmt.Errorf("illegal file path: %q", name)
+	}
+	target := filepath.Join(rootfs, filepath.FromSlash(cleaned))
+	rel, err := filepath.Rel(rootfs, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("illegal file path: %q", name)
+	}
+	return target, nil
 }
 
 func writeFileToTar(tw *tar.Writer, sourcePath, targetName string) error {
