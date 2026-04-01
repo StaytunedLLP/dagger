@@ -27,83 +27,39 @@ const (
 )
 
 type workspaceLookupLock struct {
-	ctx  context.Context
-	bk   *buildkit.Client
-	ws   *core.Workspace
-	lock *workspace.Lock
+	ctx   context.Context
+	query *core.Query
+	lock  *workspace.Lock
 }
 
 var workspaceLockWriteMu sync.Map
 
 func loadWorkspaceLookupLock(ctx context.Context, query *core.Query) (*workspaceLookupLock, error) {
-	ws, err := query.CurrentWorkspace(ctx)
+	lock, ok, err := query.CurrentWorkspaceLock(ctx)
 	if err != nil {
-		// Not all contexts have a loaded workspace; treat this as "no lock available".
-		if errors.Is(err, core.ErrNoCurrentWorkspace) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	if ws == nil || ws.HostPath() == "" {
+	if !ok {
 		return nil, nil
 	}
 
-	workspaceCtx, err := withWorkspaceClientContext(ctx, ws)
-	if err != nil {
-		return nil, fmt.Errorf("workspace client context: %w", err)
-	}
-
-	bk, err := query.Buildkit(workspaceCtx)
-	if err != nil {
-		return nil, fmt.Errorf("buildkit client: %w", err)
-	}
-
-	lock, err := readWorkspaceLock(workspaceCtx, bk, ws)
-	if err != nil {
-		return nil, err
-	}
-
 	return &workspaceLookupLock{
-		ctx:  workspaceCtx,
-		bk:   bk,
-		ws:   ws,
-		lock: lock,
+		ctx:   ctx,
+		query: query,
+		lock:  lock,
 	}, nil
-}
-
-func (l *workspaceLookupLock) Save() error {
-	if l == nil {
-		return nil
-	}
-	return exportLockToHost(l.ctx, l.bk, l.ws, l.lock)
 }
 
 func (l *workspaceLookupLock) SetLookup(namespace, operation string, inputs []any, result workspace.LookupResult) error {
 	if l == nil {
 		return fmt.Errorf("workspace lock is required")
 	}
-
-	lockPath, err := lockHostPath(l.ws)
-	if err != nil {
+	if err := l.query.SetCurrentWorkspaceLookup(l.ctx, namespace, operation, inputs, result); err != nil {
 		return err
 	}
-
-	mu := workspaceLockPathMutex(lockPath)
-	mu.Lock()
-	defer mu.Unlock()
-
-	lock, _, err := readWorkspaceLockState(l.ctx, l.bk, l.ws)
-	if err != nil {
+	if err := l.lock.SetLookup(namespace, operation, inputs, result); err != nil {
 		return err
 	}
-	if err := lock.SetLookup(namespace, operation, inputs, result); err != nil {
-		return err
-	}
-	if err := exportLockToHost(l.ctx, l.bk, l.ws, lock); err != nil {
-		return err
-	}
-
-	l.lock = lock
 	return nil
 }
 
@@ -192,11 +148,21 @@ func lockHostPath(ws *core.Workspace) (string, error) {
 	return filepath.Join(ws.HostPath(), ws.Path, workspace.LockDirName, workspace.LockFileName), nil
 }
 
+func LockHostPath(ws *core.Workspace) (string, error) {
+	return lockHostPath(ws)
+}
+
 func readWorkspaceLock(ctx context.Context, bk interface {
 	ReadCallerHostFile(ctx context.Context, path string) ([]byte, error)
 }, ws *core.Workspace) (*workspace.Lock, error) {
 	lock, _, err := readWorkspaceLockState(ctx, bk, ws)
 	return lock, err
+}
+
+func ReadWorkspaceLockState(ctx context.Context, bk interface {
+	ReadCallerHostFile(ctx context.Context, path string) ([]byte, error)
+}, ws *core.Workspace) (*workspace.Lock, bool, error) {
+	return readWorkspaceLockState(ctx, bk, ws)
 }
 
 func readWorkspaceLockState(ctx context.Context, bk interface {
@@ -224,6 +190,10 @@ func readWorkspaceLockState(ctx context.Context, bk interface {
 
 func isWorkspaceLockNotFound(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || status.Code(err) == codes.NotFound
+}
+
+func WorkspaceLockPathMutex(lockPath string) *sync.Mutex {
+	return workspaceLockPathMutex(lockPath)
 }
 
 func exportLockToHost(ctx context.Context, bk *buildkit.Client, ws *core.Workspace, lock *workspace.Lock) error {
@@ -255,6 +225,10 @@ func exportLockToHost(ctx context.Context, bk *buildkit.Client, ws *core.Workspa
 		return fmt.Errorf("export lock: %w", err)
 	}
 	return nil
+}
+
+func ExportLockToHost(ctx context.Context, bk *buildkit.Client, ws *core.Workspace, lock *workspace.Lock) error {
+	return exportLockToHost(ctx, bk, ws, lock)
 }
 
 func updateWorkspaceLock(ctx context.Context, query *core.Query, lock *workspace.Lock) error {
