@@ -266,7 +266,6 @@ func TestBackendIncusImageLoadAndExists(t *testing.T) {
 		t.Skip()
 	}
 
-	ctx := t.Context()
 	tc := struct {
 		name    string
 		backend containerBackend
