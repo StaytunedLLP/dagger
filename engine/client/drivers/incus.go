@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -33,18 +34,31 @@ const incusDockerRemoteProtocol = "oci"
 var incusHostStateDir = filepath.Join(xdg.DataHome, "dagger", "incus")
 
 type incusRemote struct {
-	Name     string `json:"name"`
 	Protocol string `json:"protocol"`
-	URL      string `json:"url"`
+	Addr     string `json:"Addr"`
 }
 
 func (incus) Available(ctx context.Context) (bool, error) {
 	if _, err := exec.LookPath("incus"); err != nil {
 		return false, nil //nolint:nilerr
 	}
-	cmd := exec.CommandContext(ctx, "incus", "info")
+	if err := traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "info"), telemetry.Encapsulated()); err == nil {
+		return true, nil
+	}
+
+	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "remote", "get-default"), telemetry.Encapsulated())
+	if err != nil {
+		return false, nil // treat a non-running or unreachable daemon as unavailable
+	}
+
+	remote := strings.TrimSpace(stdout)
+	if remote == "" {
+		return false, nil
+	}
+
+	cmd := exec.CommandContext(ctx, "incus", "info", remote+":")
 	if err := traceexec.Exec(ctx, cmd, telemetry.Encapsulated()); err != nil {
-		return false, err
+		return false, nil // treat a non-running or unreachable daemon as unavailable
 	}
 	return true, nil
 }
@@ -52,12 +66,14 @@ func (incus) Available(ctx context.Context) (bool, error) {
 func (incus) ImagePull(ctx context.Context, image string) error {
 	source, needsDockerRemote := incusRemoteImageRef(image)
 	if needsDockerRemote {
-		if err := ensureIncusDockerRemote(ctx); err != nil {
+		if err := pullIncusDockerImage(ctx, source); err != nil {
 			return err
 		}
+		return nil
 	}
+
 	alias := incusImageAlias(image)
-	exists, err := incusImageExists(ctx, alias)
+	exists, err := incusImageExists(ctx, incusLocalImageRef(ctx, alias))
 	if err != nil {
 		return err
 	}
@@ -65,23 +81,23 @@ func (incus) ImagePull(ctx context.Context, image string) error {
 		return nil
 	}
 
-	args := []string{"image", "copy", source, "local:", "--alias", alias}
+	args := []string{"image", "copy", source, incusImageCopyTarget(ctx), "--alias", alias}
 	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", args...), telemetry.Encapsulated())
 }
 
 func (incus) ImageExists(ctx context.Context, image string) (bool, error) {
-	return incusImageExists(ctx, incusImageAlias(image))
+	return incusImageExists(ctx, incusLocalImageRef(ctx, incusImageAlias(image)))
 }
 
 func (incus) ImageRemove(ctx context.Context, image string) error {
-	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "image", "delete", "local:"+incusImageAlias(image)))
+	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "image", "delete", incusLocalImageRef(ctx, incusImageAlias(image))))
 }
 
 func (incus) ImageLoader(ctx context.Context) imageload.Backend {
 	return imageload.Incus{}
 }
 
-func (incus) ContainerRun(ctx context.Context, name string, opts runOpts) error {
+func (incus) ContainerRun(ctx context.Context, name string, opts runOpts) (err error) {
 	if opts.gpus {
 		return fmt.Errorf("incus backend does not currently support GPU passthrough")
 	}
@@ -90,7 +106,7 @@ func (incus) ContainerRun(ctx context.Context, name string, opts runOpts) error 
 	}
 
 	alias := incusImageAlias(opts.image)
-	exists, err := incusImageExists(ctx, alias)
+	exists, err := incusImageExists(ctx, incusLocalImageRef(ctx, alias))
 	if err != nil {
 		return err
 	}
@@ -100,7 +116,17 @@ func (incus) ContainerRun(ctx context.Context, name string, opts runOpts) error 
 		}
 	}
 
-	args := []string{"launch", "local:" + alias, name}
+	profileName := incusProfileName(name)
+	if err := ensureIncusRunProfile(ctx, profileName, name, opts); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = traceexec.Exec(context.WithoutCancel(ctx), exec.CommandContext(context.WithoutCancel(ctx), "incus", "profile", "delete", profileName))
+		}
+	}()
+
+	args := []string{"launch", incusLocalImageRef(ctx, alias), incusInstanceRef(ctx, name), "--profile", profileName}
 	args = append(args, "-c", "security.nesting=true")
 	if opts.privileged {
 		args = append(args, "-c", "security.privileged=true")
@@ -112,18 +138,6 @@ func (incus) ContainerRun(ctx context.Context, name string, opts runOpts) error 
 		args = append(args, "-c", "limits.memory="+opts.memory)
 	}
 
-	stateDir, err := incusStateVolumeDir(name)
-	if err != nil {
-		return err
-	}
-	args = append(args, "-d", "dagger-state,type=disk,source="+stateDir+",path="+distconsts.EngineDefaultStateDir)
-
-	if cfgDir, ok, err := incusConfigDir(); err != nil {
-		return err
-	} else if ok {
-		args = append(args, "-d", "dagger-config,type=disk,source="+cfgDir+",path="+filepath.Join("/root", ".config", "dagger"))
-	}
-
 	for _, env := range opts.env {
 		k, v, ok := strings.Cut(env, "=")
 		if !ok {
@@ -132,17 +146,23 @@ func (incus) ContainerRun(ctx context.Context, name string, opts runOpts) error 
 		args = append(args, "-c", "environment."+k+"="+v)
 	}
 
-	for _, port := range opts.ports {
-		hostPort, containerPort, ok := strings.Cut(port, ":")
-		if !ok {
-			hostPort = port
-			containerPort = port
+	if len(opts.args) > 0 {
+		entrypoint := opts.args
+		if strings.Contains(opts.image, "registry.dagger.io/engine") {
+			quotedArgs := make([]string, 0, len(opts.args))
+			for _, arg := range opts.args {
+				quotedArgs = append(quotedArgs, shellQuote(arg))
+			}
+			script := "mkdir -p /etc && touch /etc/resolv.conf && exec /usr/local/bin/dagger-entrypoint.sh"
+			if len(quotedArgs) > 0 {
+				script += " " + strings.Join(quotedArgs, " ")
+			}
+			entrypoint = []string{"/bin/sh", "-lc", shellQuote(script)}
+		} else if entrypoint[0] == "dagger-entrypoint.sh" {
+			entrypoint[0] = "/usr/local/bin/dagger-entrypoint.sh"
 		}
-		args = append(args, "-d", "dagger-port-"+hostPort+",type=proxy,listen=tcp:127.0.0.1:"+hostPort+",connect=tcp:127.0.0.1:"+containerPort)
+		args = append(args, "-c", "raw.lxc=lxc.init.cmd="+strings.Join(entrypoint, " "))
 	}
-
-	args = append(args, "--")
-	args = append(args, opts.args...)
 
 	cmd := exec.CommandContext(ctx, "incus", args...)
 	_, stderr, err := traceexec.ExecOutput(ctx, cmd, telemetry.Encapsulated())
@@ -156,17 +176,20 @@ func (incus) ContainerRun(ctx context.Context, name string, opts runOpts) error 
 }
 
 func (incus) ContainerExec(ctx context.Context, name string, args []string) (string, string, error) {
-	cmdArgs := append([]string{"exec", "-T", name, "--"}, args...)
+	cmdArgs := append([]string{"exec", "-T", incusInstanceRef(ctx, name), "--"}, args...)
 	return traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", cmdArgs...))
 }
 
 func (incus) ContainerDial(ctx context.Context, name string, args []string) (net.Conn, error) {
-	cmdArgs := append([]string{"exec", "-T", name, "--"}, args...)
+	cmdArgs := append([]string{"exec", "-T", incusInstanceRef(ctx, name), "--"}, args...)
 	return commandconn.New(ctx, "incus", cmdArgs...)
 }
 
 func (incus) ContainerRemove(ctx context.Context, name string) error {
-	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "delete", "-f", name))
+	if err := traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "delete", "-f", incusInstanceRef(ctx, name))); err != nil {
+		return err
+	}
+	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "profile", "delete", incusProfileName(name)))
 }
 
 func (i incus) ContainerStart(ctx context.Context, name string) error {
@@ -177,11 +200,11 @@ func (i incus) ContainerStart(ctx context.Context, name string) error {
 	if running {
 		return nil
 	}
-	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "start", name), telemetry.Encapsulated())
+	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "start", incusInstanceRef(ctx, name)), telemetry.Encapsulated())
 }
 
 func (incus) ContainerExists(ctx context.Context, name string) (bool, error) {
-	_, stderr, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "info", name), telemetry.Encapsulated())
+	_, stderr, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "info", incusInstanceRef(ctx, name)), telemetry.Encapsulated())
 	if err == nil {
 		return true, nil
 	}
@@ -192,7 +215,12 @@ func (incus) ContainerExists(ctx context.Context, name string) (bool, error) {
 }
 
 func (incus) ContainerLs(ctx context.Context) ([]string, error) {
-	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "list", "--all", "--format", "json"))
+	args := []string{"list"}
+	if remote := incusRemoteTarget(ctx); len(remote) > 0 {
+		args = append(args, remote...)
+	}
+	args = append(args, "--format", "json")
+	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", args...))
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +250,7 @@ func (incus) ContainerReady(ctx context.Context, name string, opts runOpts) erro
 
 	for i := 0; i < 80; i++ {
 		_ = i
-		_, _, err := traceexec.ExecOutput(readyCtx, exec.CommandContext(readyCtx, "incus", append([]string{"exec", "-T", name, "--"}, probe...)...))
+		_, _, err := traceexec.ExecOutput(readyCtx, exec.CommandContext(readyCtx, "incus", append([]string{"exec", "-T", incusInstanceRef(readyCtx, name), "--"}, probe...)...))
 		if err == nil {
 			return nil
 		}
@@ -239,7 +267,7 @@ func (incus) ContainerReady(ctx context.Context, name string, opts runOpts) erro
 }
 
 func (i incus) containerIsRunning(ctx context.Context, name string) (bool, error) {
-	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "list", name, "--format", "json"))
+	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "list", incusInstanceRef(ctx, name), "--format", "json"))
 	if err != nil {
 		return false, err
 	}
@@ -288,7 +316,7 @@ func incusRemoteImageRef(image string) (string, bool) {
 }
 
 func incusImageExists(ctx context.Context, alias string) (bool, error) {
-	_, stderr, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "image", "info", "local:"+alias), telemetry.Encapsulated())
+	_, stderr, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "image", "info", alias), telemetry.Encapsulated())
 	if err == nil {
 		return true, nil
 	}
@@ -301,15 +329,13 @@ func incusImageExists(ctx context.Context, alias string) (bool, error) {
 func ensureIncusDockerRemote(ctx context.Context) error {
 	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "remote", "list", "--format", "json"))
 	if err == nil {
-		var remotes []incusRemote
+		var remotes map[string]incusRemote
 		if json.Unmarshal([]byte(stdout), &remotes) == nil {
-			for _, remote := range remotes {
-				if remote.Name == incusDockerRemote {
-					if isExpectedIncusDockerRemote(remote) {
-						return nil
-					}
-					return fmt.Errorf("incus remote %q already exists but with different configuration: protocol=%q url=%q", incusDockerRemote, remote.Protocol, remote.URL)
+			if remote, ok := remotes[incusDockerRemote]; ok {
+				if isExpectedIncusDockerRemote(remote) {
+					return nil
 				}
+				return fmt.Errorf("incus remote %q already exists but with different configuration: protocol=%q addr=%q", incusDockerRemote, remote.Protocol, remote.Addr)
 			}
 		}
 	}
@@ -317,24 +343,23 @@ func ensureIncusDockerRemote(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "incus", "remote", "add", incusDockerRemote, incusDockerRemoteURL, "--protocol="+incusDockerRemoteProtocol)
 	_, stderr, err := traceexec.ExecOutput(ctx, cmd, telemetry.Encapsulated())
 	if err != nil {
-		if !strings.Contains(strings.ToLower(stderr), "already exists") {
+		stderrLower := strings.ToLower(stderr)
+		if !strings.Contains(stderrLower, "already exists") && !strings.Contains(stderrLower, "exists as") {
 			return err
 		}
 		stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "remote", "list", "--format", "json"))
 		if err != nil {
 			return err
 		}
-		var remotes []incusRemote
+		var remotes map[string]incusRemote
 		if err := json.Unmarshal([]byte(stdout), &remotes); err != nil {
 			return err
 		}
-		for _, remote := range remotes {
-			if remote.Name == incusDockerRemote {
-				if isExpectedIncusDockerRemote(remote) {
-					return nil
-				}
-				return fmt.Errorf("incus remote %q already exists but with different configuration: protocol=%q url=%q", incusDockerRemote, remote.Protocol, remote.URL)
+		if remote, ok := remotes[incusDockerRemote]; ok {
+			if isExpectedIncusDockerRemote(remote) {
+				return nil
 			}
+			return fmt.Errorf("incus remote %q already exists but with different configuration: protocol=%q addr=%q", incusDockerRemote, remote.Protocol, remote.Addr)
 		}
 		return fmt.Errorf("incus remote %q already exists but could not be verified", incusDockerRemote)
 	}
@@ -343,7 +368,7 @@ func ensureIncusDockerRemote(ctx context.Context) error {
 
 func isExpectedIncusDockerRemote(remote incusRemote) bool {
 	return strings.EqualFold(remote.Protocol, incusDockerRemoteProtocol) &&
-		(remote.URL == incusDockerRemoteURL || remote.URL == "docker.io")
+		(remote.Addr == incusDockerRemoteURL || remote.Addr == "docker.io")
 }
 
 func incusConfigDir() (string, bool, error) {
@@ -373,4 +398,114 @@ func isIncusAlreadyExistsOutput(output string) bool {
 func isIncusNotFoundOutput(output string) bool {
 	output = strings.ToLower(output)
 	return strings.Contains(output, "not found") || strings.Contains(output, "not found in project")
+}
+
+func incusRemoteTarget(ctx context.Context) []string {
+	if remote, err := incusDefaultRemote(ctx); err == nil && remote != "" && remote != "local" {
+		return []string{remote + ":"}
+	}
+	return nil
+}
+
+func incusDefaultRemote(ctx context.Context) (string, error) {
+	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "remote", "get-default"), telemetry.Encapsulated())
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
+func incusRemotePrefix(ctx context.Context) string {
+	if remote, err := incusDefaultRemote(ctx); err == nil && remote != "" && remote != "local" {
+		return remote + ":"
+	}
+	return ""
+}
+
+func incusImageCopyTarget(ctx context.Context) string {
+	if prefix := incusRemotePrefix(ctx); prefix != "" {
+		return prefix
+	}
+	return "local:"
+}
+
+func incusLocalImageRef(ctx context.Context, alias string) string {
+	if prefix := incusRemotePrefix(ctx); prefix != "" {
+		return prefix + alias
+	}
+	return "local:" + alias
+}
+
+func incusInstanceRef(ctx context.Context, name string) string {
+	return incusRemotePrefix(ctx) + name
+}
+
+func incusProfileName(name string) string {
+	return "dagger-" + name
+}
+
+func pullIncusDockerImage(ctx context.Context, source string) error {
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "amd64"
+	}
+
+	tarball, err := os.CreateTemp("", "dagger-incus-docker-*.tar")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tarball.Close()
+		_ = os.Remove(tarball.Name())
+	}()
+
+	if err := traceexec.Exec(ctx, exec.CommandContext(ctx, "skopeo", "copy", "--override-os", "linux", "--override-arch", arch, "docker://"+strings.TrimPrefix(source, "docker:"), "docker-archive:"+tarball.Name()), telemetry.Encapsulated()); err != nil {
+		return err
+	}
+
+	if err := tarball.Close(); err != nil {
+		return err
+	}
+
+	f, err := os.Open(tarball.Name())
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	loader, err := (imageload.Incus{}).Loader(ctx)
+	if err != nil {
+		return err
+	}
+	return loader.TarballWriter(ctx, strings.TrimPrefix(source, "docker:"), f)
+}
+
+func ensureIncusRunProfile(ctx context.Context, profileName, name string, opts runOpts) error {
+	_ = traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "profile", "delete", profileName))
+
+	if err := traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", "profile", "create", profileName)); err != nil {
+		return err
+	}
+
+	addDevice := func(deviceName, deviceType string, deviceArgs ...string) error {
+		args := append([]string{"profile", "device", "add", profileName, deviceName, deviceType}, deviceArgs...)
+		return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", args...))
+	}
+
+	if err := addDevice("root", "disk", "pool=default", "path=/"); err != nil {
+		return err
+	}
+
+	for _, port := range opts.ports {
+		hostPort, containerPort, ok := strings.Cut(port, ":")
+		if !ok {
+			hostPort = port
+			containerPort = port
+		}
+		if err := addDevice("dagger-port-"+hostPort, "proxy", "listen=tcp:127.0.0.1:"+hostPort, "connect=tcp:127.0.0.1:"+containerPort); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

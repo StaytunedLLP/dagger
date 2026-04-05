@@ -25,6 +25,9 @@ func InstallResolvconf(name, containerDNS string) error {
 	if err := createIfNeeded(upstreamResolvPath); err != nil {
 		return err
 	}
+	if err := createIfNeeded(resolv); err != nil {
+		return err
+	}
 
 	// preserve original resolv.conf at upstream path
 	//

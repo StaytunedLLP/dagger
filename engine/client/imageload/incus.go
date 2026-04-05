@@ -88,7 +88,14 @@ func (loader Incus) saveTarball(ctx context.Context, name string, tarball io.Wri
 	}
 	defer os.RemoveAll(outDir)
 
-	cmd := exec.CommandContext(ctx, "incus", "image", "export", "local:"+alias, outDir)
+	ref := "local:" + alias
+	if stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "remote", "get-default"), telemetry.Encapsulated()); err == nil {
+		if remote := strings.TrimSpace(stdout); remote != "" && remote != "local" {
+			ref = remote + ":" + alias
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, "incus", "image", "export", ref, outDir)
 	if err := traceexec.Exec(ctx, cmd, telemetry.Encapsulated()); err != nil {
 		return fmt.Errorf("incus image export failed: %w", err)
 	}
@@ -342,7 +349,7 @@ func parseDockerImageArchive(index *archiveIndex) (*imageArchive, error) {
 		return nil, err
 	}
 	if !imageConfigMatchesHost(cfg) {
-		return nil, fmt.Errorf("docker image in %s does not match host platform %s/%s", index.dir, runtime.GOOS, normalizeIncusArchitecture(runtime.GOARCH))
+		return nil, fmt.Errorf("docker image in %s does not match target platform linux/%s", index.dir, normalizeIncusArchitecture(runtime.GOARCH))
 	}
 
 	layers := make([]string, 0, len(manifest.Layers))
@@ -420,7 +427,7 @@ func parseOCIManifest(index *archiveIndex, manifest ocispecs.Manifest) (*imageAr
 		return nil, err
 	}
 	if !imageConfigMatchesHost(cfg) {
-		return nil, fmt.Errorf("OCI image in %s does not match host platform %s/%s", index.dir, runtime.GOOS, normalizeIncusArchitecture(runtime.GOARCH))
+		return nil, fmt.Errorf("OCI image in %s does not match target platform linux/%s", index.dir, normalizeIncusArchitecture(runtime.GOARCH))
 	}
 
 	layers := make([]string, 0, len(manifest.Layers))
@@ -659,11 +666,11 @@ func selectOCIManifestDescriptor(index ocispecs.Index) (ocispecs.Descriptor, err
 		if desc.Platform == nil {
 			return desc, nil
 		}
-		if desc.Platform.OS != "" && desc.Platform.OS != runtime.GOOS {
-			return ocispecs.Descriptor{}, fmt.Errorf("no OCI manifest in index matches host platform %s/%s", runtime.GOOS, normalizeIncusArchitecture(runtime.GOARCH))
+		if desc.Platform.OS != "" && desc.Platform.OS != "linux" {
+			return ocispecs.Descriptor{}, fmt.Errorf("no OCI manifest in index matches target platform linux/%s", normalizeIncusArchitecture(runtime.GOARCH))
 		}
 		if desc.Platform.Architecture != "" && normalizeIncusArchitecture(desc.Platform.Architecture) != normalizeIncusArchitecture(runtime.GOARCH) {
-			return ocispecs.Descriptor{}, fmt.Errorf("no OCI manifest in index matches host platform %s/%s", runtime.GOOS, normalizeIncusArchitecture(runtime.GOARCH))
+			return ocispecs.Descriptor{}, fmt.Errorf("no OCI manifest in index matches target platform linux/%s", normalizeIncusArchitecture(runtime.GOARCH))
 		}
 		return desc, nil
 	}
@@ -673,7 +680,7 @@ func selectOCIManifestDescriptor(index ocispecs.Index) (ocispecs.Descriptor, err
 		if desc.Platform == nil {
 			continue
 		}
-		if desc.Platform.OS != "" && desc.Platform.OS != runtime.GOOS {
+		if desc.Platform.OS != "" && desc.Platform.OS != "linux" {
 			continue
 		}
 		if desc.Platform.Architecture != "" && normalizeIncusArchitecture(desc.Platform.Architecture) != hostArch {
@@ -682,11 +689,11 @@ func selectOCIManifestDescriptor(index ocispecs.Index) (ocispecs.Descriptor, err
 		return desc, nil
 	}
 
-	return ocispecs.Descriptor{}, fmt.Errorf("no OCI manifest in index matches host platform %s/%s", runtime.GOOS, hostArch)
+	return ocispecs.Descriptor{}, fmt.Errorf("no OCI manifest in index matches target platform linux/%s", hostArch)
 }
 
 func imageConfigMatchesHost(cfg dockerImageConfig) bool {
-	if cfg.OS != "" && cfg.OS != runtime.GOOS {
+	if cfg.OS != "" && cfg.OS != "linux" && cfg.OS != runtime.GOOS {
 		return false
 	}
 	if cfg.Architecture != "" && normalizeIncusArchitecture(cfg.Architecture) != normalizeIncusArchitecture(runtime.GOARCH) {
@@ -904,11 +911,10 @@ func resolvePathWithinRoot(rootfs, target string, create bool) (string, error) {
 }
 
 func safeResolvedPath(rootfs, baseDir, name string) (string, error) {
-	if hasParentTraversal(name) {
-		return "", fmt.Errorf("illegal file path: %q", name)
-	}
 	target := name
-	if !filepath.IsAbs(name) {
+	if filepath.IsAbs(name) {
+		target = filepath.Join(rootfs, strings.TrimPrefix(name, string(os.PathSeparator)))
+	} else {
 		target = filepath.Join(baseDir, name)
 	}
 	target = filepath.Clean(target)
@@ -927,11 +933,13 @@ func safeResolvedPath(rootfs, baseDir, name string) (string, error) {
 }
 
 func safeSymlinkTarget(rootfs, baseDir, linkname string) error {
-	if hasParentTraversal(linkname) {
+	if linkname == "" {
 		return fmt.Errorf("illegal file path: %q", linkname)
 	}
 	target := linkname
-	if !filepath.IsAbs(linkname) {
+	if filepath.IsAbs(linkname) {
+		target = filepath.Join(rootfs, strings.TrimPrefix(linkname, string(os.PathSeparator)))
+	} else {
 		target = filepath.Join(baseDir, linkname)
 	}
 	target = filepath.Clean(target)

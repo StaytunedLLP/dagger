@@ -36,7 +36,8 @@ func TestNormalizeIncusArchitecture(t *testing.T) {
 func TestBuildMetadataYAMLUsesIncusArchitectureNames(t *testing.T) {
 	t.Parallel()
 
-	yaml := buildMetadataYAML("alias", dockerImageConfig{Architecture: "arm64", OS: "linux", Created: time.Unix(0, 0).UTC()})
+	created := time.Unix(0, 0).UTC()
+	yaml := buildMetadataYAML("alias", dockerImageConfig{Architecture: "arm64", OS: "linux", Created: &created})
 	require.Contains(t, yaml, "aarch64")
 	require.Contains(t, yaml, "linux")
 	require.Contains(t, yaml, "alias")

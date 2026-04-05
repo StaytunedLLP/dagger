@@ -13,47 +13,42 @@ func TestIsExpectedIncusDockerRemote(t *testing.T) {
 		{
 			name: "matching",
 			remote: incusRemote{
-				Name:     incusDockerRemote,
 				Protocol: incusDockerRemoteProtocol,
-				URL:      incusDockerRemoteURL,
+				Addr:     incusDockerRemoteURL,
 			},
 			want: true,
 		},
 		{
 			name: "matching short url",
 			remote: incusRemote{
-				Name:     incusDockerRemote,
 				Protocol: incusDockerRemoteProtocol,
-				URL:      "docker.io",
+				Addr:     "docker.io",
 			},
 			want: true,
 		},
 		{
 			name: "protocol mismatch",
 			remote: incusRemote{
-				Name:     incusDockerRemote,
 				Protocol: "simplestreams",
-				URL:      incusDockerRemoteURL,
+				Addr:     incusDockerRemoteURL,
 			},
 			want: false,
 		},
 		{
 			name: "url mismatch",
 			remote: incusRemote{
-				Name:     incusDockerRemote,
 				Protocol: incusDockerRemoteProtocol,
-				URL:      "https://example.com",
+				Addr:     "https://example.com",
 			},
 			want: false,
 		},
 		{
 			name: "different name",
 			remote: incusRemote{
-				Name:     "other",
 				Protocol: incusDockerRemoteProtocol,
-				URL:      incusDockerRemoteURL,
+				Addr:     incusDockerRemoteURL,
 			},
-			want: false,
+			want: true,
 		},
 	}
 
@@ -67,4 +62,3 @@ func TestIsExpectedIncusDockerRemote(t *testing.T) {
 		})
 	}
 }
-
