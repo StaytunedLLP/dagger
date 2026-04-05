@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"compress/gzip"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -74,15 +76,61 @@ func seedIncusTestImage(t *testing.T, backend containerBackend, imageRef string)
 		return
 	}
 
-	loadBackend := backend.ImageLoader(ctx)
-	require.NotNil(t, loadBackend)
-	loader, err := loadBackend.Loader(ctx)
+	tarball, err := buildTestIncusArchive(imageRef)
 	require.NoError(t, err)
 
-	tarball, err := buildTestDockerArchive(imageRef)
+	tmp, err := os.CreateTemp("", "dagger-incus-seed-*.tar.gz")
 	require.NoError(t, err)
+	defer os.Remove(tmp.Name())
+	_, err = tmp.Write(tarball)
+	require.NoError(t, err)
+	require.NoError(t, tmp.Close())
 
-	require.NoError(t, loader.TarballWriter(ctx, imageRef, bytes.NewReader(tarball)))
+	cmd := exec.CommandContext(ctx, "incus", "image", "import", tmp.Name(), "--alias", incusImageAlias(imageRef))
+	require.NoError(t, cmd.Run())
+}
+
+func buildTestIncusArchive(repoTag string) ([]byte, error) {
+	var tarball bytes.Buffer
+	gw := gzip.NewWriter(&tarball)
+	tw := tar.NewWriter(gw)
+
+	metadata := []byte(fmt.Sprintf(`architecture: %s
+creation_date: 0
+properties:
+  description: %s
+  os: %s
+`, normalizeIncusArchitecture(runtime.GOARCH), repoTag, runtime.GOOS))
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "metadata.yaml",
+		Mode: 0o644,
+		Size: int64(len(metadata)),
+	}); err != nil {
+		return nil, err
+	}
+	if _, err := tw.Write(metadata); err != nil {
+		return nil, err
+	}
+
+	payload := []byte("hello from dagger")
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "rootfs/hello.txt",
+		Mode: 0o644,
+		Size: int64(len(payload)),
+	}); err != nil {
+		return nil, err
+	}
+	if _, err := tw.Write(payload); err != nil {
+		return nil, err
+	}
+
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	if err := gw.Close(); err != nil {
+		return nil, err
+	}
+	return tarball.Bytes(), nil
 }
 
 func buildTestDockerArchive(repoTag string) ([]byte, error) {
