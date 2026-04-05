@@ -96,7 +96,7 @@ func (incus) ContainerRun(ctx context.Context, name string, opts runOpts) error 
 		return err
 	}
 	if !exists {
-		if err := incus{}.ImagePull(ctx, opts.image); err != nil {
+		if err := (incus{}).ImagePull(ctx, opts.image); err != nil {
 			return err
 		}
 	}

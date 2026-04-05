@@ -23,21 +23,21 @@ Incus is available from the [official installation docs](https://linuxcontainers
 
 On Ubuntu 24.04 LTS and later, Incus is available as a native package. The same package path applies to Ubuntu 25.10. On Raspberry Pi 5, use the Ubuntu ARM64 image or install Ubuntu Server for `arm64`, then install Incus the same way. If you specifically want the newest Incus feature release rather than the distro package, follow the official installation docs for the feature branch.
 
-## Install the Dagger CLI from this branch
+## Install the Dagger CLI from this branch on the Pi
 
-The Incus support in this guide lives in this branch and is not part of the released Dagger CLI yet. To test it, build the CLI from source and use that binary for the rest of the steps:
+The Incus support in this guide lives in the `lxc-support` branch of your fork and is not part of the released Dagger CLI yet. On the Raspberry Pi, build the CLI from source and use that binary for the rest of the steps:
 
 ```console
-$ git clone https://github.com/dagger/dagger.git
+$ git clone https://github.com/StaytunedLLP/dagger.git
 $ cd dagger
-$ git checkout <this-branch>
+$ git checkout lxc-support
 $ go version
 $ go build -o ./bin/dagger ./cmd/dagger
 $ export PATH="$PWD/bin:$PATH"
 $ dagger version
 ```
 
-If you prefer to install the branch build globally instead, run `go install ./cmd/dagger` and ensure `"$GOBIN"` is on your `PATH`. Use Go `1.25.6` or newer, matching the version in `go.mod`.
+If you want to install it globally on the Pi instead, run `go install ./cmd/dagger` and ensure `"$GOBIN"` is on your `PATH`. Use Go `1.25.6` or newer, matching the version in `go.mod`.
 
 ## Step-by-step: Ubuntu 25.10
 
@@ -108,7 +108,7 @@ Use this flow on a Raspberry Pi 5 running Ubuntu Server or Ubuntu Desktop for `a
    $ incus info
    ```
 
-2. Build and install the Dagger CLI from this branch:
+2. Build and install the Dagger CLI from this branch on the Pi:
 
    ```console
    $ go version
@@ -117,7 +117,7 @@ Use this flow on a Raspberry Pi 5 running Ubuntu Server or Ubuntu Desktop for `a
    $ dagger version
    ```
 
-   If you are building on another machine, copy the resulting `dagger` binary to the Pi and place it somewhere on `PATH`.
+   Build on the Pi itself so the resulting binary matches the Pi’s Linux `arm64` environment.
 
 3. Put your user in the Incus admin group and refresh the shell:
 
