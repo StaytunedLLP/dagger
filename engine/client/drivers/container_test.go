@@ -43,6 +43,16 @@ var backends = []struct {
 
 var _, shouldRun = os.LookupEnv("DRIVER_TEST")
 
+func requireBackendAvailable(t *testing.T, backend containerBackend) {
+	t.Helper()
+
+	available, err := backend.Available(t.Context())
+	require.NoError(t, err)
+	if !available {
+		t.Skip("backend not available")
+	}
+}
+
 func TestBackendImagePullAndExists(t *testing.T) {
 	if !shouldRun {
 		t.Skip()
@@ -50,11 +60,7 @@ func TestBackendImagePullAndExists(t *testing.T) {
 
 	for _, tc := range backends {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.name == "incus" {
-				if _, err := exec.LookPath("incus"); err != nil {
-					t.Skip("incus binary not available")
-				}
-			}
+			requireBackendAvailable(t, tc.backend)
 			ctx := t.Context()
 
 			testImage := "alpine:3.18"
@@ -88,6 +94,7 @@ func TestBackendImageLoadAndExists(t *testing.T) {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
+			requireBackendAvailable(t, tc.backend)
 			ctx := t.Context()
 
 			sourceImage := "alpine:3.18"
@@ -149,9 +156,7 @@ func TestBackendIncusImageLoadAndExists(t *testing.T) {
 	}
 
 	t.Run(tc.name, func(t *testing.T) {
-		if _, err := exec.LookPath("incus"); err != nil {
-			t.Skip("incus binary not available")
-		}
+		requireBackendAvailable(t, tc.backend)
 		testImage := "alpine:3.18"
 		loadedImageName := "test-loaded-alpine:custom"
 		_ = tc.backend.ImageRemove(ctx, testImage)
@@ -198,11 +203,7 @@ func TestBackendContainerRunExec(t *testing.T) {
 
 	for _, tc := range backends {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.name == "incus" {
-				if _, err := exec.LookPath("incus"); err != nil {
-					t.Skip("incus binary not available")
-				}
-			}
+			requireBackendAvailable(t, tc.backend)
 			ctx := t.Context()
 			containerName := "test-run-exec-container"
 			testImage := "alpine:3.18"
@@ -324,6 +325,7 @@ func TestBackendContainerRunWithOptions(t *testing.T) {
 
 	for _, tc := range backends {
 		t.Run(tc.name, func(t *testing.T) {
+			requireBackendAvailable(t, tc.backend)
 			ctx := t.Context()
 			containerName := "test-run-options-container"
 			testImage := "alpine:3.18"

@@ -74,8 +74,10 @@ Use this flow to validate Dagger on a standard Ubuntu 25.10 workstation or lapto
 4. From the Dagger repository, run the Incus backend sanity checks:
 
    ```console
-   $ DRIVER_TEST=1 go test ./engine/client/drivers -run 'TestBackend|TestBackendIncusImageLoadAndExists' -count=1
+   $ DRIVER_TEST=1 go test ./engine/client/drivers -run 'TestBackendImagePullAndExists/incus|TestBackendContainerRunExec/incus|TestBackendContainerLs/incus|TestBackendContainerRunWithOptions/incus|TestBackendIncusImageLoadAndExists' -count=1
    ```
+
+   This runs the Incus-specific backend checks only. The full `engine/client/drivers` matrix also includes Docker, Podman, Nerdctl, and Apple backends, so only run that wider matrix on a machine where those runtimes are installed and usable.
 
 5. Run the Dagger provisioning suite so the engine starts through Incus, reconnects, and cleans up correctly:
 
@@ -140,8 +142,10 @@ Use this flow on a Raspberry Pi 5 running Ubuntu Server or Ubuntu Desktop for `a
 5. Run the backend sanity checks from the Dagger repository:
 
    ```console
-   $ DRIVER_TEST=1 go test ./engine/client/drivers -run 'TestBackend|TestBackendIncusImageLoadAndExists' -count=1
+   $ DRIVER_TEST=1 go test ./engine/client/drivers -run 'TestBackendImagePullAndExists/incus|TestBackendContainerRunExec/incus|TestBackendContainerLs/incus|TestBackendContainerRunWithOptions/incus|TestBackendIncusImageLoadAndExists' -count=1
    ```
+
+   This runs the Incus-specific backend checks only. The full `engine/client/drivers` matrix also includes Docker, Podman, Nerdctl, and Apple backends, so only run that wider matrix on a machine where those runtimes are installed and usable.
 
 6. Run the provisioning suite and confirm the engine container starts, reconnects, and cleans up:
 
