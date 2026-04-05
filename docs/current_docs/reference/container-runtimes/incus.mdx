@@ -77,7 +77,7 @@ Use this flow to validate Dagger on a standard Ubuntu 25.10 workstation or lapto
    $ DRIVER_TEST=1 go test ./engine/client/drivers -run 'TestBackendImagePullAndExists/incus|TestBackendContainerRunExec/incus|TestBackendContainerLs/incus|TestBackendContainerRunWithOptions/incus|TestBackendIncusImageLoadAndExists' -count=1
    ```
 
-   This runs the Incus-specific backend checks only. The Incus path uses Incus's built-in `images:` server for its test image, so you do not need Docker, Podman, Nerdctl, or Apple tooling installed. The full `engine/client/drivers` matrix also includes those other backends, so only run that wider matrix on a machine where they are installed and usable.
+   This runs the Incus-specific backend checks only. The Incus path seeds a tiny local image from a test tarball, so you do not need Docker, Podman, Nerdctl, or Apple tooling installed. The full `engine/client/drivers` matrix also includes those other backends, so only run that wider matrix on a machine where they are installed and usable.
 
 5. Run the Dagger provisioning suite so the engine starts through Incus, reconnects, and cleans up correctly:
 
@@ -145,7 +145,7 @@ Use this flow on a Raspberry Pi 5 running Ubuntu Server or Ubuntu Desktop for `a
    $ DRIVER_TEST=1 go test ./engine/client/drivers -run 'TestBackendImagePullAndExists/incus|TestBackendContainerRunExec/incus|TestBackendContainerLs/incus|TestBackendContainerRunWithOptions/incus|TestBackendIncusImageLoadAndExists' -count=1
    ```
 
-   This runs the Incus-specific backend checks only. The Incus path uses Incus's built-in `images:` server for its test image, so you do not need Docker, Podman, Nerdctl, or Apple tooling installed. The full `engine/client/drivers` matrix also includes those other backends, so only run that wider matrix on a machine where they are installed and usable.
+   This runs the Incus-specific backend checks only. The Incus path seeds a tiny local image from a test tarball, so you do not need Docker, Podman, Nerdctl, or Apple tooling installed. The full `engine/client/drivers` matrix also includes those other backends, so only run that wider matrix on a machine where they are installed and usable.
 
 6. Run the provisioning suite and confirm the engine container starts, reconnects, and cleans up:
 
