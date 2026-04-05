@@ -109,6 +109,10 @@ type containerBackend interface {
 	ContainerLs(ctx context.Context) ([]string, error)
 }
 
+type containerReadinessBackend interface {
+	ContainerReady(ctx context.Context, name string, opts runOpts) error
+}
+
 var errContainerAlreadyExists = errors.New("container already exists")
 
 type runOpts struct {
@@ -117,6 +121,7 @@ type runOpts struct {
 	volumes []string
 	env     []string
 	ports   []string
+	port    int
 
 	privileged bool
 
@@ -258,6 +263,14 @@ func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopt
 		containerName = containerNamePrefix + id
 	}
 
+	runOptions := runOpts{
+		image: opts.imageRef,
+		env:   opts.env,
+		cpus:  opts.cpus,
+		memory: opts.memory,
+		port:  opts.port,
+	}
+
 	leftoverEngines, err := d.collectLeftoverEngines(ctx, containerName)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -272,6 +285,11 @@ func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopt
 		if leftoverEngine == containerName {
 			if err := d.backend.ContainerStart(ctx, leftoverEngine); err != nil {
 				return nil, fmt.Errorf("failed to start container: %w", err)
+			}
+			if readyBackend, ok := d.backend.(containerReadinessBackend); ok {
+				if err := readyBackend.ContainerReady(ctx, containerName, runOptions); err != nil {
+					return nil, fmt.Errorf("waiting for engine container readiness: %w", err)
+				}
 			}
 			d.garbageCollectEngines(ctx, opts.cleanup, slices.Delete(leftoverEngines, i, i+1))
 			return &url.URL{Host: containerName}, nil
@@ -294,15 +312,9 @@ func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopt
 		volume = opts.volumeName + ":" + volume
 	}
 
-	runOptions := runOpts{
-		image:      opts.imageRef,
-		volumes:    []string{volume},
-		privileged: true,
-		args:       []string{"--debug"},
-		env:        opts.env,
-		cpus:       opts.cpus,
-		memory:     opts.memory,
-	}
+	runOptions.volumes = append(runOptions.volumes, volume)
+	runOptions.privileged = true
+	runOptions.args = []string{"--debug"}
 
 	// mount the config path
 	if _, err := os.Stat(engineConfigPath); err == nil {
@@ -338,6 +350,12 @@ func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopt
 		}
 	}
 
+	if readyBackend, ok := d.backend.(containerReadinessBackend); ok {
+		if err := readyBackend.ContainerReady(ctx, containerName, runOptions); err != nil {
+			return nil, fmt.Errorf("waiting for engine container readiness: %w", err)
+		}
+	}
+
 	// garbage collect any other containers with the same name pattern, which
 	// we assume to be leftover from previous runs of the engine using an older
 	// version
@@ -365,7 +383,7 @@ func (d *imageDriver) garbageCollectEngines(ctx context.Context, cleanup bool, e
 func (d *imageDriver) collectLeftoverEngines(ctx context.Context, additionalNames ...string) ([]string, error) {
 	engines, err := d.backend.ContainerLs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list containers %s: %w", engines, err)
+		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
 
 	var filteredEngines []string

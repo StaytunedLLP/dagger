@@ -474,7 +474,7 @@ func runtimeContainerNames(ctx context.Context, t *testctx.T, dockerc *dagger.Co
 	if cli == "incus" {
 		out, err := dockerc.
 			WithEnvVariable("CACHEBUSTER", identity.NewID()).
-			WithExec([]string{"incus", "list", "--format", "json"}).
+			WithExec([]string{"incus", "list", "--all", "--format", "json"}).
 			Stdout(ctx)
 		require.NoError(t, err)
 
@@ -485,7 +485,7 @@ func runtimeContainerNames(ctx context.Context, t *testctx.T, dockerc *dagger.Co
 		require.NoError(t, json.Unmarshal([]byte(out), &rows))
 		names := make([]string, 0, len(rows))
 		for _, row := range rows {
-			if row.Name != "" && strings.HasPrefix(row.Name, "dagger-engine-") && strings.EqualFold(row.Status, "running") {
+			if row.Name != "" && strings.HasPrefix(row.Name, "dagger-engine-") {
 				names = append(names, row.Name)
 			}
 		}

@@ -265,9 +265,12 @@ func imageArchiveToIncusTarball(sourcePath, alias string) (_ string, rerr error)
 			if err != nil {
 				return err
 			}
-			defer f.Close()
-			_, err = io.Copy(tw, f)
-			return err
+			_, copyErr := io.Copy(tw, f)
+			closeErr := f.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			return closeErr
 		}
 		return nil
 	}); err != nil {
@@ -502,7 +505,17 @@ func untarInto(rootfs string, r io.Reader) error {
 
 		switch {
 		case strings.HasPrefix(base, ".wh.") && base != ".wh..wh..opq":
-			whTarget := filepath.Join(dir, strings.TrimPrefix(base, ".wh."))
+			whTarget, err := safeArchiveTarget(rootfs, filepath.Join(filepath.Dir(hdr.Name), strings.TrimPrefix(base, ".wh.")))
+			if err != nil {
+				return err
+			}
+			resolvedWhTarget, err := resolvePathWithinRoot(rootfs, whTarget, false)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if resolvedWhTarget != "" {
+				whTarget = resolvedWhTarget
+			}
 			if err := os.RemoveAll(whTarget); err != nil {
 				return err
 			}
@@ -522,32 +535,45 @@ func untarInto(rootfs string, r io.Reader) error {
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)); err != nil {
-				return err
-			}
-		case tar.TypeSymlink:
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return err
-			}
-			if err := os.Symlink(hdr.Linkname, target); err != nil && !os.IsExist(err) {
-				return err
-			}
-		case tar.TypeLink:
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return err
-			}
-			linkTarget, err := safeExtractPath(rootfs, hdr.Linkname)
+			resolvedDir, err := resolvePathWithinRoot(rootfs, target, true)
 			if err != nil {
 				return err
 			}
-			if err := os.Link(linkTarget, target); err != nil && !os.IsExist(err) {
+			if err := os.MkdirAll(resolvedDir, os.FileMode(hdr.Mode)); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			resolvedDir, err := resolvePathWithinRoot(rootfs, dir, true)
+			if err != nil {
+				return err
+			}
+			if err := safeSymlinkTarget(rootfs, resolvedDir, hdr.Linkname); err != nil {
+				return err
+			}
+			linkTarget := filepath.Join(resolvedDir, filepath.Base(target))
+			if err := os.Symlink(hdr.Linkname, linkTarget); err != nil && !os.IsExist(err) {
+				return err
+			}
+		case tar.TypeLink:
+			resolvedDir, err := resolvePathWithinRoot(rootfs, dir, true)
+			if err != nil {
+				return err
+			}
+			linkTarget, err := safeResolvedPath(rootfs, dir, hdr.Linkname)
+			if err != nil {
+				return err
+			}
+			targetPath := filepath.Join(resolvedDir, filepath.Base(target))
+			if err := os.Link(linkTarget, targetPath); err != nil && !os.IsExist(err) {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			resolvedDir, err := resolvePathWithinRoot(rootfs, dir, true)
+			if err != nil {
 				return err
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(hdr.Mode))
+			filePath := filepath.Join(resolvedDir, filepath.Base(target))
+			f, err := safeOpenFile(rootfs, filePath, os.FileMode(hdr.Mode))
 			if err != nil {
 				return err
 			}
@@ -789,6 +815,11 @@ func (a *archiveIndex) file(target string) (string, error) {
 func normalizeArchiveName(name string) string {
 	name = strings.TrimSpace(strings.TrimPrefix(name, "./"))
 	name = strings.TrimPrefix(name, "/")
+	for _, part := range strings.Split(name, "/") {
+		if part == ".." {
+			return ""
+		}
+	}
 	name = path.Clean(name)
 	if name == "." || name == "" {
 		return ""
@@ -813,6 +844,147 @@ func safeExtractPath(rootfs, name string) (string, error) {
 		return "", fmt.Errorf("illegal file path: %q", name)
 	}
 	return target, nil
+}
+
+func safeArchiveTarget(rootfs, name string) (string, error) {
+	target, err := safeExtractPath(rootfs, name)
+	if err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func resolvePathWithinRoot(rootfs, target string, create bool) (string, error) {
+	rel, err := filepath.Rel(rootfs, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." {
+		return rootfs, nil
+	}
+
+	curr := rootfs
+	parts := strings.Split(rel, string(os.PathSeparator))
+	for idx, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		next := filepath.Join(curr, part)
+		info, err := os.Lstat(next)
+		switch {
+		case err == nil:
+			if info.Mode()&os.ModeSymlink != 0 {
+				resolved, err := filepath.EvalSymlinks(next)
+				if err != nil {
+					return "", err
+				}
+				if err := ensurePathWithinRoot(rootfs, resolved); err != nil {
+					return "", err
+				}
+				curr = resolved
+				continue
+			}
+			if idx < len(parts)-1 && !info.IsDir() {
+				return "", fmt.Errorf("path component %q is not a directory", next)
+			}
+			curr = next
+		case errors.Is(err, os.ErrNotExist):
+			if !create {
+				return "", os.ErrNotExist
+			}
+			if err := os.Mkdir(next, 0o755); err != nil && !os.IsExist(err) {
+				return "", err
+			}
+			curr = next
+		default:
+			return "", err
+		}
+	}
+	return curr, nil
+}
+
+func safeResolvedPath(rootfs, baseDir, name string) (string, error) {
+	if hasParentTraversal(name) {
+		return "", fmt.Errorf("illegal file path: %q", name)
+	}
+	target := name
+	if !filepath.IsAbs(name) {
+		target = filepath.Join(baseDir, name)
+	}
+	target = filepath.Clean(target)
+	rel, err := filepath.Rel(rootfs, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("illegal file path: %q", name)
+	}
+	resolved, err := resolvePathWithinRoot(rootfs, target, false)
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func safeSymlinkTarget(rootfs, baseDir, linkname string) error {
+	if hasParentTraversal(linkname) {
+		return fmt.Errorf("illegal file path: %q", linkname)
+	}
+	target := linkname
+	if !filepath.IsAbs(linkname) {
+		target = filepath.Join(baseDir, linkname)
+	}
+	target = filepath.Clean(target)
+	rel, err := filepath.Rel(rootfs, target)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("illegal file path: %q", linkname)
+	}
+	return nil
+}
+
+func safeOpenFile(rootfs, target string, perm os.FileMode) (*os.File, error) {
+	dir, err := resolvePathWithinRoot(rootfs, filepath.Dir(target), true)
+	if err != nil {
+		return nil, err
+	}
+	full := filepath.Join(dir, filepath.Base(target))
+	if info, err := os.Lstat(full); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("illegal file path: %s", full)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("path %q is a directory", full)
+		}
+	}
+	return os.OpenFile(full, os.O_CREATE|os.O_RDWR|os.O_TRUNC, perm)
+}
+
+func ensurePathWithinRoot(rootfs, target string) error {
+	rel, err := filepath.Rel(rootfs, target)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("illegal file path: %s", target)
+	}
+	return nil
+}
+
+func hasParentTraversal(name string) bool {
+	trimmed := strings.TrimSpace(strings.TrimPrefix(name, "./"))
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	for _, part := range strings.Split(trimmed, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func writeFileToTar(tw *tar.Writer, sourcePath, targetName string) error {

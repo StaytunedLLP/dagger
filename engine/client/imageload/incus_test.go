@@ -48,6 +48,8 @@ func TestSafeExtractPathRejectsTraversal(t *testing.T) {
 	rootfs := t.TempDir()
 	_, err := safeExtractPath(rootfs, "../../etc/passwd")
 	require.Error(t, err)
+	_, err = safeExtractPath(rootfs, "a/../b")
+	require.Error(t, err)
 	_, err = safeExtractPath(rootfs, "/etc/passwd")
 	require.Error(t, err)
 }
@@ -81,6 +83,65 @@ func TestUntarIntoRejectsHardlinkTraversal(t *testing.T) {
 		Name:     "link",
 		Linkname: "../../etc/passwd",
 		Typeflag: tar.TypeLink,
+	}))
+	require.NoError(t, tw.Close())
+
+	rootfs := t.TempDir()
+	err := untarInto(rootfs, bytes.NewReader(buf.Bytes()))
+	require.Error(t, err)
+}
+
+func TestUntarIntoRejectsHardlinkParentTraversal(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "link",
+		Linkname: "a/../passwd",
+		Typeflag: tar.TypeLink,
+	}))
+	require.NoError(t, tw.Close())
+
+	rootfs := t.TempDir()
+	err := untarInto(rootfs, bytes.NewReader(buf.Bytes()))
+	require.Error(t, err)
+}
+
+func TestUntarIntoRejectsSymlinkEscape(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "escape",
+		Linkname: "/tmp",
+		Typeflag: tar.TypeSymlink,
+	}))
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "escape/passwd",
+		Mode:     0o644,
+		Size:     int64(len("owned")),
+		Typeflag: tar.TypeReg,
+	}))
+	_, err := io.WriteString(tw, "owned")
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+
+	rootfs := t.TempDir()
+	err = untarInto(rootfs, bytes.NewReader(buf.Bytes()))
+	require.Error(t, err)
+}
+
+func TestUntarIntoRejectsSymlinkParentTraversal(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name:     "escape",
+		Linkname: "a/../tmp",
+		Typeflag: tar.TypeSymlink,
 	}))
 	require.NoError(t, tw.Close())
 

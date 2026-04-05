@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/adrg/xdg"
 	"github.com/dagger/dagger/engine/client/imageload"
@@ -192,7 +193,7 @@ func (incus) ContainerExists(ctx context.Context, name string) (bool, error) {
 }
 
 func (incus) ContainerLs(ctx context.Context) ([]string, error) {
-	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "list", "--format", "json"))
+	stdout, _, err := traceexec.ExecOutput(ctx, exec.CommandContext(ctx, "incus", "list", "--all", "--format", "json"))
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +210,33 @@ func (incus) ContainerLs(ctx context.Context) ([]string, error) {
 		}
 	}
 	return ids, nil
+}
+
+func (incus) ContainerReady(ctx context.Context, name string, opts runOpts) error {
+	probe := []string{"sh", "-ec", readinessProbeCommand(opts)}
+	readyCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	var lastErr error
+	ticker := time.NewTicker(750 * time.Millisecond)
+	defer ticker.Stop()
+
+	for i := 0; i < 80; i++ {
+		_ = i
+		_, _, err := traceexec.ExecOutput(readyCtx, exec.CommandContext(readyCtx, "incus", append([]string{"exec", "-T", name, "--"}, probe...)...))
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		select {
+		case <-readyCtx.Done():
+			return fmt.Errorf("timed out waiting for engine container %q to become ready: %w", name, lastErr)
+		case <-ticker.C:
+		}
+	}
+
+	return fmt.Errorf("timed out waiting for engine container %q to become ready: %w", name, lastErr)
 }
 
 func (i incus) containerIsRunning(ctx context.Context, name string) (bool, error) {
@@ -234,6 +262,23 @@ func (i incus) containerIsRunning(ctx context.Context, name string) (bool, error
 func incusImageAlias(image string) string {
 	sum := sha256.Sum256([]byte(image))
 	return "dagger-" + hex.EncodeToString(sum[:8])
+}
+
+func readinessProbeCommand(opts runOpts) string {
+	addr := distconsts.DefaultEngineSockAddr
+	if opts.port != 0 {
+		addr = fmt.Sprintf("tcp://127.0.0.1:%d", opts.port)
+	}
+
+	return fmt.Sprintf(`if command -v buildctl >/dev/null 2>&1; then
+		buildctl --addr %s debug workers >/dev/null 2>&1
+	else
+		test -S /run/dagger/engine.sock
+	fi`, shellQuote(addr))
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 func incusRemoteImageRef(image string) string {
