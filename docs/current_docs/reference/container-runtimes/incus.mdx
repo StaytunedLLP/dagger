@@ -23,6 +23,22 @@ Incus is available from the [official installation docs](https://linuxcontainers
 
 On Ubuntu 24.04 LTS and later, Incus is available as a native package. The same package path applies to Ubuntu 25.10. On Raspberry Pi 5, use the Ubuntu ARM64 image or install Ubuntu Server for `arm64`, then install Incus the same way. If you specifically want the newest Incus feature release rather than the distro package, follow the official installation docs for the feature branch.
 
+## Install the Dagger CLI from this branch
+
+The Incus support in this guide lives in this branch and is not part of the released Dagger CLI yet. To test it, build the CLI from source and use that binary for the rest of the steps:
+
+```console
+$ git clone https://github.com/dagger/dagger.git
+$ cd dagger
+$ git checkout <this-branch>
+$ go version
+$ go build -o ./bin/dagger ./cmd/dagger
+$ export PATH="$PWD/bin:$PATH"
+$ dagger version
+```
+
+If you prefer to install the branch build globally instead, run `go install ./cmd/dagger` and ensure `"$GOBIN"` is on your `PATH`. Use Go `1.25.6` or newer, matching the version in `go.mod`.
+
 ## Step-by-step: Ubuntu 25.10
 
 Use this flow to validate Dagger on a standard Ubuntu 25.10 workstation or laptop.
@@ -92,7 +108,18 @@ Use this flow on a Raspberry Pi 5 running Ubuntu Server or Ubuntu Desktop for `a
    $ incus info
    ```
 
-2. Put your user in the Incus admin group and refresh the shell:
+2. Build and install the Dagger CLI from this branch:
+
+   ```console
+   $ go version
+   $ go build -o ./bin/dagger ./cmd/dagger
+   $ export PATH="$PWD/bin:$PATH"
+   $ dagger version
+   ```
+
+   If you are building on another machine, copy the resulting `dagger` binary to the Pi and place it somewhere on `PATH`.
+
+3. Put your user in the Incus admin group and refresh the shell:
 
    ```console
    $ sudo usermod -aG incus-admin "$USER"
@@ -100,7 +127,7 @@ Use this flow on a Raspberry Pi 5 running Ubuntu Server or Ubuntu Desktop for `a
    $ incus info
    ```
 
-3. Verify that Incus can launch an `arm64` container on the Pi:
+4. Verify that Incus can launch an `arm64` container on the Pi:
 
    ```console
    $ incus launch images:ubuntu/25.10 test-incus
@@ -110,19 +137,19 @@ Use this flow on a Raspberry Pi 5 running Ubuntu Server or Ubuntu Desktop for `a
 
    On a Pi 5, `uname -m` should report `aarch64`.
 
-4. Run the backend sanity checks from the Dagger repository:
+5. Run the backend sanity checks from the Dagger repository:
 
    ```console
    $ DRIVER_TEST=1 go test ./engine/client/drivers -run 'TestBackend|TestBackendIncusImageLoadAndExists' -count=1
    ```
 
-5. Run the provisioning suite and confirm the engine container starts, reconnects, and cleans up:
+6. Run the provisioning suite and confirm the engine container starts, reconnects, and cleans up:
 
    ```console
    $ go test ./core/integration -run TestProvision -count=1
    ```
 
-6. Run a live Dagger command through Incus:
+7. Run a live Dagger command through Incus:
 
    ```console
    $ export _EXPERIMENTAL_DAGGER_RUNNER_HOST=image+incus://registry.dagger.io/engine:dev
@@ -131,7 +158,7 @@ Use this flow on a Raspberry Pi 5 running Ubuntu Server or Ubuntu Desktop for `a
    $ incus list | grep dagger-engine
    ```
 
-7. Repeat the same Dagger command after closing the terminal and starting a fresh shell to confirm the engine reconnect path works on the Pi.
+8. Repeat the same Dagger command after closing the terminal and starting a fresh shell to confirm the engine reconnect path works on the Pi.
 
 ## Example
 
