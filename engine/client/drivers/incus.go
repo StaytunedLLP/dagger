@@ -50,8 +50,11 @@ func (incus) Available(ctx context.Context) (bool, error) {
 }
 
 func (incus) ImagePull(ctx context.Context, image string) error {
-	if err := ensureIncusDockerRemote(ctx); err != nil {
-		return err
+	source, needsDockerRemote := incusRemoteImageRef(image)
+	if needsDockerRemote {
+		if err := ensureIncusDockerRemote(ctx); err != nil {
+			return err
+		}
 	}
 	alias := incusImageAlias(image)
 	exists, err := incusImageExists(ctx, alias)
@@ -62,7 +65,6 @@ func (incus) ImagePull(ctx context.Context, image string) error {
 		return nil
 	}
 
-	source := incusRemoteImageRef(image)
 	args := []string{"image", "copy", source, "local:", "--alias", alias}
 	return traceexec.Exec(ctx, exec.CommandContext(ctx, "incus", args...), telemetry.Encapsulated())
 }
@@ -82,9 +84,6 @@ func (incus) ImageLoader(ctx context.Context) imageload.Backend {
 func (incus) ContainerRun(ctx context.Context, name string, opts runOpts) error {
 	if opts.gpus {
 		return fmt.Errorf("incus backend does not currently support GPU passthrough")
-	}
-	if err := ensureIncusDockerRemote(ctx); err != nil {
-		return err
 	}
 	if err := os.MkdirAll(incusHostStateDir, 0o755); err != nil {
 		return err
@@ -281,11 +280,11 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
-func incusRemoteImageRef(image string) string {
+func incusRemoteImageRef(image string) (string, bool) {
 	if strings.Contains(image, "://") || strings.HasPrefix(image, "local:") || strings.HasPrefix(image, "docker:") || strings.HasPrefix(image, "images:") {
-		return image
+		return image, false
 	}
-	return "docker:" + image
+	return "docker:" + image, true
 }
 
 func incusImageExists(ctx context.Context, alias string) (bool, error) {

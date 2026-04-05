@@ -53,6 +53,13 @@ func requireBackendAvailable(t *testing.T, backend containerBackend) {
 	}
 }
 
+func testImageForBackend(name string) string {
+	if name == "incus" {
+		return "images:ubuntu/25.10"
+	}
+	return "alpine:3.18"
+}
+
 func TestBackendImagePullAndExists(t *testing.T) {
 	if !shouldRun {
 		t.Skip()
@@ -63,7 +70,7 @@ func TestBackendImagePullAndExists(t *testing.T) {
 			requireBackendAvailable(t, tc.backend)
 			ctx := t.Context()
 
-			testImage := "alpine:3.18"
+			testImage := testImageForBackend(tc.name)
 			_ = tc.backend.ImageRemove(ctx, testImage)
 
 			existsBefore, err := tc.backend.ImageExists(ctx, testImage)
@@ -97,7 +104,7 @@ func TestBackendImageLoadAndExists(t *testing.T) {
 			requireBackendAvailable(t, tc.backend)
 			ctx := t.Context()
 
-			sourceImage := "alpine:3.18"
+			sourceImage := testImageForBackend(tc.name)
 			_ = tc.backend.ImageRemove(ctx, sourceImage)
 			loadedImageName := "test-loaded-alpine:custom"
 			_ = tc.backend.ImageRemove(ctx, loadedImageName)
@@ -157,7 +164,7 @@ func TestBackendIncusImageLoadAndExists(t *testing.T) {
 
 	t.Run(tc.name, func(t *testing.T) {
 		requireBackendAvailable(t, tc.backend)
-		testImage := "alpine:3.18"
+		testImage := testImageForBackend(tc.name)
 		loadedImageName := "test-loaded-alpine:custom"
 		_ = tc.backend.ImageRemove(ctx, testImage)
 		_ = tc.backend.ImageRemove(ctx, loadedImageName)
@@ -206,7 +213,7 @@ func TestBackendContainerRunExec(t *testing.T) {
 			requireBackendAvailable(t, tc.backend)
 			ctx := t.Context()
 			containerName := "test-run-exec-container"
-			testImage := "alpine:3.18"
+			testImage := testImageForBackend(tc.name)
 
 			_ = tc.backend.ImageRemove(ctx, testImage)
 			_ = tc.backend.ContainerRemove(ctx, containerName)
@@ -265,7 +272,7 @@ func TestBackendContainerLs(t *testing.T) {
 				}
 			}
 			ctx := t.Context()
-			testImage := "alpine:3.18"
+			testImage := testImageForBackend(tc.name)
 			containers := []string{"test-ls-container-1", "test-ls-container-2"}
 
 			_ = tc.backend.ImageRemove(ctx, testImage)
@@ -328,7 +335,7 @@ func TestBackendContainerRunWithOptions(t *testing.T) {
 			requireBackendAvailable(t, tc.backend)
 			ctx := t.Context()
 			containerName := "test-run-options-container"
-			testImage := "alpine:3.18"
+			testImage := testImageForBackend(tc.name)
 
 			_ = tc.backend.ImageRemove(ctx, testImage)
 			_ = tc.backend.ContainerRemove(ctx, containerName)
