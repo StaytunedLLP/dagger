@@ -9,4 +9,4 @@ edition = "2021"
 [dependencies]
 dagger-sdk = { path = "../../crates/dagger-sdk" }
 eyre = "0.6.12"
-tokio = "1.37.0"
+tokio = "1.38.2"
