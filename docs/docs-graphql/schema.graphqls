@@ -1,3 +1,14 @@
+"""Controls the caching behavior of a function."""
+directive @cache(
+  """The cache policy to use."""
+  policy: FunctionCachePolicy
+
+  """
+  The time-to-live for cached results, as a duration string (e.g. "5m", "1h30s"). Only valid with the Default policy.
+  """
+  ttl: String
+) on FIELD_DEFINITION
+
 """Indicates that this function is a check."""
 directive @check on FIELD_DEFINITION
 
@@ -26,6 +37,9 @@ directive @ignorePatterns(patterns: [String!]!) on ARGUMENT_DEFINITION
 
 """Indicates the source information for where a given field is defined."""
 directive @sourceMap(module: String!, filename: String!, line: Int!, column: Int!, url: String!) on SCALAR | OBJECT | FIELD_DEFINITION | ARGUMENT_DEFINITION | UNION | ENUM | ENUM_VALUE | INPUT_OBJECT
+
+"""Indicates that this function returns a service for dagger up."""
+directive @up on FIELD_DEFINITION
 
 """
 A standardized address to load containers, directories, secrets, and other
@@ -91,6 +105,9 @@ type Binding {
   """Retrieve the binding value, as type Container"""
   asContainer: Container!
 
+  """Retrieve the binding value, as type DiffStat"""
+  asDiffStat: DiffStat!
+
   """Retrieve the binding value, as type Directory"""
   asDirectory: Directory!
 
@@ -114,6 +131,9 @@ type Binding {
 
   """Retrieve the binding value, as type GitRepository"""
   asGitRepository: GitRepository!
+
+  """Retrieve the binding value, as type HTTPState"""
+  asHTTPState: HTTPState!
 
   """Retrieve the binding value, as type JSONValue"""
   asJSONValue: JSONValue!
@@ -147,6 +167,12 @@ type Binding {
 
   """Returns the binding's string value"""
   asString: String
+
+  """Retrieve the binding value, as type Up"""
+  asUp: Up!
+
+  """Retrieve the binding value, as type UpGroup"""
+  asUpGroup: UpGroup!
 
   """Retrieve the binding value, as type Workspace"""
   asWorkspace: Workspace!
@@ -221,6 +247,11 @@ type Changeset {
 
   """The older/lower snapshot to compare against."""
   before: Directory!
+
+  """
+  Structured per-path diff statistics (kind and line counts) for this changeset.
+  """
+  diffStats: [DiffStat!]!
 
   """Applies the diff represented by this changeset to a path on the host."""
   export(
@@ -368,7 +399,10 @@ type CheckGroup {
   report: File!
 
   """Execute all selected checks"""
-  run: CheckGroup!
+  run(
+    """If true, stop running checks as soon as any check fails."""
+    failFast: Boolean
+  ): CheckGroup!
 }
 
 """
@@ -380,6 +414,17 @@ scalar CheckGroupID
 The `CheckID` scalar type represents an identifier for an object of type Check.
 """
 scalar CheckID
+
+"""An internal persistent filesync mirror."""
+type ClientFilesyncMirror {
+  """A unique identifier for this ClientFilesyncMirror."""
+  id: ClientFilesyncMirrorID!
+}
+
+"""
+The `ClientFilesyncMirrorID` scalar type represents an identifier for an object of type ClientFilesyncMirror.
+"""
+scalar ClientFilesyncMirrorID
 
 """Dagger Cloud configuration and state"""
 type Cloud {
@@ -931,6 +976,8 @@ type Container {
     environment variables defined in the container (e.g. "/$VAR/foo").
     """
     expand: Boolean = false
+
+    permissions: Int
   ): Container!
 
   """
@@ -1230,6 +1277,9 @@ type Container {
     If the group is omitted, it defaults to the same as the user.
     """
     owner: String = ""
+
+    """Mount the directory read-only."""
+    readOnly: Boolean = false
 
     """
     Replace "${VAR}" or "$VAR" in the value of path according to the current
@@ -1682,6 +1732,46 @@ The `CurrentModuleID` scalar type represents an identifier for an object of type
 """
 scalar CurrentModuleID
 
+type DiffStat {
+  """Number of added lines for this path."""
+  addedLines: Int!
+
+  """A unique identifier for this DiffStat."""
+  id: DiffStatID!
+
+  """Type of change."""
+  kind: DiffStatKind!
+
+  """Previous path of the file, set only for renames."""
+  oldPath: String
+
+  """Path of the changed file or directory."""
+  path: String!
+
+  """Number of removed lines for this path."""
+  removedLines: Int!
+}
+
+"""
+The `DiffStatID` scalar type represents an identifier for an object of type DiffStat.
+"""
+scalar DiffStatID
+
+"""The type of change for a diff stat entry."""
+enum DiffStatKind {
+  """A file or directory was added."""
+  ADDED
+
+  """A file was modified."""
+  MODIFIED
+
+  """A file or directory was removed."""
+  REMOVED
+
+  """A file was renamed."""
+  RENAMED
+}
+
 """A directory."""
 type Directory {
   """Converts this directory to a local git repository"""
@@ -1725,7 +1815,7 @@ type Directory {
     """
     A user:group to set for the mounted directory and its contents.
 
-    The user and group must be an ID (1000:1000), not a name (foo:bar).
+    The user and group can either be an ID (1000:1000) or a name (foo:bar).
 
     If the group is omitted, it defaults to the same as the user.
     """
@@ -1992,11 +2082,14 @@ type Directory {
     """
     A user:group to set for the copied directory and its contents.
 
-    The user and group must be an ID (1000:1000), not a name (foo:bar).
+    The user and group can either be an ID (1000:1000) or a name (foo:bar).
 
     If the group is omitted, it defaults to the same as the user.
     """
     owner: String = ""
+
+    """Permission given to the copied directory and contents (e.g., 0755)."""
+    permissions: Int
   ): Directory!
 
   """Raise an error."""
@@ -2021,7 +2114,7 @@ type Directory {
     """
     A user:group to set for the copied directory and its contents.
 
-    The user and group must be an ID (1000:1000), not a name (foo:bar).
+    The user and group can either be an ID (1000:1000) or a name (foo:bar).
 
     If the group is omitted, it defaults to the same as the user.
     """
@@ -2144,7 +2237,7 @@ type Engine {
   """A unique identifier for this Engine."""
   id: EngineID!
 
-  """The local (on-disk) cache for the Dagger engine"""
+  """The local engine cache state tracked by dagql"""
   localCache: EngineCache!
 
   """The name of the engine instance."""
@@ -2285,6 +2378,7 @@ type EnumTypeDef {
   """
   sourceModuleName: String!
 
+  """The members of the enum."""
   values: [EnumValueTypeDef!]! @deprecated(reason: "use members instead")
 }
 
@@ -2348,6 +2442,12 @@ type Env {
 
   """Returns all declared output bindings for the environment"""
   outputs: [Binding!]!
+
+  """Return all services defined by the installed modules"""
+  services(
+    """Only include services matching the specified patterns"""
+    include: [String!]
+  ): UpGroup! @experimental(reason: "Services API is highly experimental and may be removed or replaced entirely.")
 
   """Create or update a binding of type Address in the environment"""
   withAddressInput(
@@ -2502,6 +2602,27 @@ type Env {
   Contextual path arguments will be populated using the environment's workspace.
   """
   withCurrentModule: Env!
+
+  """Create or update a binding of type DiffStat in the environment"""
+  withDiffStatInput(
+    """The name of the binding"""
+    name: String!
+
+    """The DiffStat value to assign to the binding"""
+    value: DiffStatID!
+
+    """The purpose of the input"""
+    description: String!
+  ): Env!
+
+  """Declare a desired DiffStat output to be assigned in the environment"""
+  withDiffStatOutput(
+    """The name of the binding"""
+    name: String!
+
+    """A description of the desired value of the binding"""
+    description: String!
+  ): Env!
 
   """Create or update a binding of type Directory in the environment"""
   withDirectoryInput(
@@ -2668,6 +2789,27 @@ type Env {
   Declare a desired GitRepository output to be assigned in the environment
   """
   withGitRepositoryOutput(
+    """The name of the binding"""
+    name: String!
+
+    """A description of the desired value of the binding"""
+    description: String!
+  ): Env!
+
+  """Create or update a binding of type HTTPState in the environment"""
+  withHTTPStateInput(
+    """The name of the binding"""
+    name: String!
+
+    """The HTTPState value to assign to the binding"""
+    value: HTTPStateID!
+
+    """The purpose of the input"""
+    description: String!
+  ): Env!
+
+  """Declare a desired HTTPState output to be assigned in the environment"""
+  withHTTPStateOutput(
     """The name of the binding"""
     name: String!
 
@@ -2930,6 +3072,48 @@ type Env {
     description: String!
   ): Env!
 
+  """Create or update a binding of type UpGroup in the environment"""
+  withUpGroupInput(
+    """The name of the binding"""
+    name: String!
+
+    """The UpGroup value to assign to the binding"""
+    value: UpGroupID!
+
+    """The purpose of the input"""
+    description: String!
+  ): Env!
+
+  """Declare a desired UpGroup output to be assigned in the environment"""
+  withUpGroupOutput(
+    """The name of the binding"""
+    name: String!
+
+    """A description of the desired value of the binding"""
+    description: String!
+  ): Env!
+
+  """Create or update a binding of type Up in the environment"""
+  withUpInput(
+    """The name of the binding"""
+    name: String!
+
+    """The Up value to assign to the binding"""
+    value: UpID!
+
+    """The purpose of the input"""
+    description: String!
+  ): Env!
+
+  """Declare a desired Up output to be assigned in the environment"""
+  withUpOutput(
+    """The name of the binding"""
+    name: String!
+
+    """A description of the desired value of the binding"""
+    description: String!
+  ): Env!
+
   """Returns a new environment with the provided workspace"""
   withWorkspace(
     """The directory to set as the host filesystem"""
@@ -3152,7 +3336,7 @@ type File {
     """
     A user:group to set for the file.
 
-    The user and group must be an ID (1000:1000), not a name (foo:bar).
+    The user and group can either be an ID (1000:1000) or a name (foo:bar).
 
     If the group is omitted, it defaults to the same as the user.
     """
@@ -3417,6 +3601,11 @@ type Function {
     """The source map for the function definition."""
     sourceMap: SourceMapID!
   ): Function!
+
+  """
+  Returns the function with a flag indicating it returns a service for dagger up.
+  """
+  withUp: Function!
 }
 
 """
@@ -3572,7 +3761,7 @@ The `GeneratedCodeID` scalar type represents an identifier for an object of type
 scalar GeneratedCodeID
 
 type Generator {
-  """The generated changeset"""
+  """The generated changeset from the last run"""
   changes: Changeset!
 
   """Whether the generator complete"""
@@ -3584,7 +3773,7 @@ type Generator {
   """A unique identifier for this Generator."""
   id: GeneratorID!
 
-  """Wether changeset from the generator execution is empty or not"""
+  """Whether changeset from the last generator run is empty or not"""
   isEmpty: Boolean!
 
   """Return the fully qualified name of the generator"""
@@ -3602,7 +3791,7 @@ type Generator {
 
 type GeneratorGroup {
   """
-  The combined changes from the generators execution
+  The combined changes from the last run of the generators
 
   If any conflict occurs, for instance if the same file is modified by multiple
   generators, or if a file is both modified and deleted, an error is raised and
@@ -3618,7 +3807,7 @@ type GeneratorGroup {
   """A unique identifier for this GeneratorGroup."""
   id: GeneratorGroupID!
 
-  """Whether the generated changeset is empty or not"""
+  """Whether the generated changeset from the last run is empty or not"""
   isEmpty: Boolean!
 
   """Return a list of individual generators and their details"""
@@ -3735,6 +3924,17 @@ type GitRepository {
 The `GitRepositoryID` scalar type represents an identifier for an object of type GitRepository.
 """
 scalar GitRepositoryID
+
+"""An internal persistent HTTP state."""
+type HTTPState {
+  """A unique identifier for this HTTPState."""
+  id: HTTPStateID!
+}
+
+"""
+The `HTTPStateID` scalar type represents an identifier for an object of type HTTPState.
+"""
+scalar HTTPStateID
 
 """Image healthcheck configuration."""
 type HealthcheckConfig {
@@ -4293,6 +4493,12 @@ type Module {
     entrypoint: Boolean
   ): Void
 
+  """Return all services defined by the module"""
+  services(
+    """Only include services matching the specified patterns"""
+    include: [String!]
+  ): UpGroup! @experimental(reason: "This API is highly experimental and may be removed or replaced entirely.")
+
   """The source for the module."""
   source: ModuleSource
 
@@ -4638,7 +4844,7 @@ enum NetworkProtocol {
 
 """A definition of a custom object defined in a Module."""
 type ObjectTypeDef {
-  """The function used to construct new instances of this object, if any"""
+  """The function used to construct new instances of this object, if any."""
   constructor: Function
 
   """The reason this enum member is deprecated, if any."""
@@ -4737,6 +4943,21 @@ type Query {
     A string identifier to target this cache volume (e.g., "modules-cache").
     """
     key: String!
+
+    """Identifier of the directory to use as the cache volume's root."""
+    source: DirectoryID
+
+    """Sharing mode of the cache volume."""
+    sharing: CacheSharingMode = SHARED
+
+    """
+    A user:group to set for the cache volume root.
+
+    The user and group can either be an ID (1000:1000) or a name (foo:bar).
+
+    If the group is omitted, it defaults to the same as the user.
+    """
+    owner: String = ""
   ): CacheVolume!
 
   """Creates an empty changeset"""
@@ -4786,6 +5007,11 @@ type Query {
   The TypeDef representations of the objects currently being served in the session.
   """
   currentTypeDefs(
+    """
+    Return the full referenced typedef closure instead of only top-level served typedefs.
+    """
+    returnAllTypes: Boolean = false
+
     """
     Strip core API functions from the Query type, leaving only module-sourced
     functions (constructors, entrypoint proxies, etc.).
@@ -4909,6 +5135,9 @@ type Query {
     """Permissions to set on the file."""
     permissions: Int
 
+    """Expected digest of the downloaded content (e.g., "sha256:...")."""
+    checksum: String
+
     """Secret used to populate the Authorization HTTP header"""
     authHeader: SecretID
 
@@ -4949,6 +5178,9 @@ type Query {
   """Load a CheckGroup from its ID."""
   loadCheckGroupFromID(id: CheckGroupID!): CheckGroup!
 
+  """Load a ClientFilesyncMirror from its ID."""
+  loadClientFilesyncMirrorFromID(id: ClientFilesyncMirrorID!): ClientFilesyncMirror!
+
   """Load a Cloud from its ID."""
   loadCloudFromID(id: CloudID!): Cloud!
 
@@ -4957,6 +5189,9 @@ type Query {
 
   """Load a CurrentModule from its ID."""
   loadCurrentModuleFromID(id: CurrentModuleID!): CurrentModule!
+
+  """Load a DiffStat from its ID."""
+  loadDiffStatFromID(id: DiffStatID!): DiffStat!
 
   """Load a Directory from its ID."""
   loadDirectoryFromID(id: DirectoryID!): Directory!
@@ -5027,6 +5262,9 @@ type Query {
   """Load a GitRepository from its ID."""
   loadGitRepositoryFromID(id: GitRepositoryID!): GitRepository!
 
+  """Load a HTTPState from its ID."""
+  loadHTTPStateFromID(id: HTTPStateID!): HTTPState!
+
   """Load a HealthcheckConfig from its ID."""
   loadHealthcheckConfigFromID(id: HealthcheckConfigID!): HealthcheckConfig!
 
@@ -5072,6 +5310,9 @@ type Query {
   """Load a Query from its ID."""
   loadQueryFromID(id: QueryID!): Query!
 
+  """Load a RemoteGitMirror from its ID."""
+  loadRemoteGitMirrorFromID(id: RemoteGitMirrorID!): RemoteGitMirror!
+
   """Load a SDKConfig from its ID."""
   loadSDKConfigFromID(id: SDKConfigID!): SDKConfig
 
@@ -5104,6 +5345,12 @@ type Query {
 
   """Load a TypeDef from its ID."""
   loadTypeDefFromID(id: TypeDefID!): TypeDef!
+
+  """Load a Up from its ID."""
+  loadUpFromID(id: UpID!): Up!
+
+  """Load a UpGroup from its ID."""
+  loadUpGroupFromID(id: UpGroupID!): UpGroup!
 
   """Load a Workspace from its ID."""
   loadWorkspaceFromID(id: WorkspaceID!): Workspace!
@@ -5195,6 +5442,17 @@ type Query {
 The `QueryID` scalar type represents an identifier for an object of type Query.
 """
 scalar QueryID
+
+"""An internal persistent bare git mirror."""
+type RemoteGitMirror {
+  """A unique identifier for this RemoteGitMirror."""
+  id: RemoteGitMirrorID!
+}
+
+"""
+The `RemoteGitMirrorID` scalar type represents an identifier for an object of type RemoteGitMirror.
+"""
+scalar RemoteGitMirrorID
 
 """Expected return type of an execution"""
 enum ReturnType {
@@ -5510,6 +5768,9 @@ type TypeDef {
   """The kind of type this is (e.g. primitive, list, object)."""
   kind: TypeDefKind!
 
+  """The canonical non-optional name of the type."""
+  name: String!
+
   """Whether this type can be set to null. Defaults to false."""
   optional: Boolean!
 
@@ -5747,6 +6008,47 @@ enum TypeDefKind {
   ENUM
 }
 
+type Up {
+  """The description of the service"""
+  description: String!
+
+  """A unique identifier for this Up."""
+  id: UpID!
+
+  """Return the fully qualified name of the service"""
+  name: String!
+
+  """The original module in which the service has been defined"""
+  originalModule: Module!
+
+  """The path of the service within its module"""
+  path: [String!]!
+
+  """Execute the service function"""
+  run: Up!
+}
+
+type UpGroup {
+  """A unique identifier for this UpGroup."""
+  id: UpGroupID!
+
+  """Return a list of individual services and their details"""
+  list: [Up!]!
+
+  """Execute all selected service functions"""
+  run: UpGroup!
+}
+
+"""
+The `UpGroupID` scalar type represents an identifier for an object of type UpGroup.
+"""
+scalar UpGroupID
+
+"""
+The `UpID` scalar type represents an identifier for an object of type Up.
+"""
+scalar UpID
+
 """
 The absence of a value.
 
@@ -5851,6 +6153,12 @@ type Workspace {
 
   """Workspace directory path relative to the workspace boundary."""
   path: String!
+
+  """Return all services from modules loaded in the workspace."""
+  services(
+    """Only include services matching the specified patterns"""
+    include: [String!]
+  ): UpGroup!
 }
 
 """

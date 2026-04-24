@@ -53,9 +53,9 @@ func Address(value string) *dagger.Address {
 }
 
 // Constructs a cache volume for a given cache key.
-func CacheVolume(key string) *dagger.CacheVolume {
+func CacheVolume(key string, opts ...dagger.CacheVolumeOpts) *dagger.CacheVolume {
 	client := initClient()
-	return client.CacheVolume(key)
+	return client.CacheVolume(key, opts...)
 }
 
 // Creates an empty changeset
@@ -248,6 +248,12 @@ func LoadCheckGroupFromID(id dagger.CheckGroupID) *dagger.CheckGroup {
 	return client.LoadCheckGroupFromID(id)
 }
 
+// Load a ClientFilesyncMirror from its ID.
+func LoadClientFilesyncMirrorFromID(id dagger.ClientFilesyncMirrorID) *dagger.ClientFilesyncMirror {
+	client := initClient()
+	return client.LoadClientFilesyncMirrorFromID(id)
+}
+
 // Load a Cloud from its ID.
 func LoadCloudFromID(id dagger.CloudID) *dagger.Cloud {
 	client := initClient()
@@ -264,6 +270,12 @@ func LoadContainerFromID(id dagger.ContainerID) *dagger.Container {
 func LoadCurrentModuleFromID(id dagger.CurrentModuleID) *dagger.CurrentModule {
 	client := initClient()
 	return client.LoadCurrentModuleFromID(id)
+}
+
+// Load a DiffStat from its ID.
+func LoadDiffStatFromID(id dagger.DiffStatID) *dagger.DiffStat {
+	client := initClient()
+	return client.LoadDiffStatFromID(id)
 }
 
 // Load a Directory from its ID.
@@ -404,6 +416,12 @@ func LoadGitRepositoryFromID(id dagger.GitRepositoryID) *dagger.GitRepository {
 	return client.LoadGitRepositoryFromID(id)
 }
 
+// Load a HTTPState from its ID.
+func LoadHTTPStateFromID(id dagger.HTTPStateID) *dagger.HTTPState {
+	client := initClient()
+	return client.LoadHTTPStateFromID(id)
+}
+
 // Load a HealthcheckConfig from its ID.
 func LoadHealthcheckConfigFromID(id dagger.HealthcheckConfigID) *dagger.HealthcheckConfig {
 	client := initClient()
@@ -494,6 +512,12 @@ func LoadQueryFromID(id dagger.QueryID) *dagger.Query {
 	return client.LoadQueryFromID(id)
 }
 
+// Load a RemoteGitMirror from its ID.
+func LoadRemoteGitMirrorFromID(id dagger.RemoteGitMirrorID) *dagger.RemoteGitMirror {
+	client := initClient()
+	return client.LoadRemoteGitMirrorFromID(id)
+}
+
 // Load a SDKConfig from its ID.
 func LoadSDKConfigFromID(id dagger.SDKConfigID) *dagger.SDKConfig {
 	client := initClient()
@@ -558,6 +582,18 @@ func LoadTerminalFromID(id dagger.TerminalID) *dagger.Terminal {
 func LoadTypeDefFromID(id dagger.TypeDefID) *dagger.TypeDef {
 	client := initClient()
 	return client.LoadTypeDefFromID(id)
+}
+
+// Load a Up from its ID.
+func LoadUpFromID(id dagger.UpID) *dagger.Up {
+	client := initClient()
+	return client.LoadUpFromID(id)
+}
+
+// Load a UpGroup from its ID.
+func LoadUpGroupFromID(id dagger.UpGroupID) *dagger.UpGroup {
+	client := initClient()
+	return client.LoadUpGroupFromID(id)
 }
 
 // Load a Workspace from its ID.

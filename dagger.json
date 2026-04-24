@@ -1,6 +1,6 @@
 {
   "name": "dagger-dev",
-  "engineVersion": "v0.20.3",
+  "engineVersion": "v0.20.6",
   "sdk": {
     "source": "go"
   },
@@ -53,6 +53,10 @@
             "**/broken*/**",
             "core/integration/testdata/checks/hello-with-checks/",
             "core/integration/testdata/generators/hello-with-generators/",
+            "core/integration/testdata/services/hello-with-services/",
+            "core/integration/testdata/services/port-collision/",
+            "core/integration/testdata/services/partial-failure/",
+            "core/integration/testdata/services/service-binding/",
             "toolchains/release/testdata/module/"
           ]
         }
@@ -75,8 +79,17 @@
       "source": "toolchains/java-sdk-dev"
     },
     {
+      "name": "markdown-lint",
+      "source": "modules/markdownlint"
+    },
+    {
       "name": "php-sdk",
       "source": "toolchains/php-sdk-dev"
+    },
+    {
+      "name": "ps-analyzer",
+      "source": "github.com/dagger/PsScriptAnalyzer@main",
+      "pin": "d87a12883dccd495bee98da9d2c20eb44b6f608d"
     },
     {
       "name": "python-sdk",
@@ -114,6 +127,11 @@
           ]
         }
       ]
+    },
+    {
+      "name": "shellcheck",
+      "source": "github.com/dagger/shellcheck@main",
+      "pin": "34bcb268f4483fa31ea9e33b6a86aa7892144323"
     },
     {
       "name": "test-split",

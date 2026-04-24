@@ -253,6 +253,13 @@ function ChangesetsMergeConflictNameToValue(
       return name as ChangesetsMergeConflict
   }
 }
+export type CheckGroupRunOpts = {
+  /**
+   * If true, stop running checks as soon as any check fails.
+   */
+  failFast?: boolean
+}
+
 /**
  * The `CheckGroupID` scalar type represents an identifier for an object of type CheckGroup.
  */
@@ -262,6 +269,13 @@ export type CheckGroupID = string & { __CheckGroupID: never }
  * The `CheckID` scalar type represents an identifier for an object of type Check.
  */
 export type CheckID = string & { __CheckID: never }
+
+/**
+ * The `ClientFilesyncMirrorID` scalar type represents an identifier for an object of type ClientFilesyncMirror.
+ */
+export type ClientFilesyncMirrorID = string & {
+  __ClientFilesyncMirrorID: never
+}
 
 /**
  * The `CloudID` scalar type represents an identifier for an object of type Cloud.
@@ -547,6 +561,7 @@ export type ContainerWithDirectoryOpts = {
    * Replace "${VAR}" or "$VAR" in the value of path according to the current environment variables defined in the container (e.g. "/$VAR/foo").
    */
   expand?: boolean
+  permissions?: number
 }
 
 export type ContainerWithDockerHealthcheckOpts = {
@@ -749,6 +764,11 @@ export type ContainerWithMountedDirectoryOpts = {
   owner?: string
 
   /**
+   * Mount the directory read-only.
+   */
+  readOnly?: boolean
+
+  /**
    * Replace "${VAR}" or "$VAR" in the value of path according to the current environment variables defined in the container (e.g. "/$VAR/foo").
    */
   expand?: boolean
@@ -939,6 +959,73 @@ export type CurrentModuleWorkdirOpts = {
  */
 export type CurrentModuleID = string & { __CurrentModuleID: never }
 
+/**
+ * The `DiffStatID` scalar type represents an identifier for an object of type DiffStat.
+ */
+export type DiffStatID = string & { __DiffStatID: never }
+
+/**
+ * The type of change for a diff stat entry.
+ */
+export enum DiffStatKind {
+  /**
+   * A file or directory was added.
+   */
+  Added = "ADDED",
+
+  /**
+   * A file was modified.
+   */
+  Modified = "MODIFIED",
+
+  /**
+   * A file or directory was removed.
+   */
+  Removed = "REMOVED",
+
+  /**
+   * A file was renamed.
+   */
+  Renamed = "RENAMED",
+}
+
+/**
+ * Utility function to convert a DiffStatKind value to its name so
+ * it can be uses as argument to call a exposed function.
+ */
+function DiffStatKindValueToName(value: DiffStatKind): string {
+  switch (value) {
+    case DiffStatKind.Added:
+      return "ADDED"
+    case DiffStatKind.Modified:
+      return "MODIFIED"
+    case DiffStatKind.Removed:
+      return "REMOVED"
+    case DiffStatKind.Renamed:
+      return "RENAMED"
+    default:
+      return value
+  }
+}
+
+/**
+ * Utility function to convert a DiffStatKind name to its value so
+ * it can be properly used inside the module runtime.
+ */
+function DiffStatKindNameToValue(name: string): DiffStatKind {
+  switch (name) {
+    case "ADDED":
+      return DiffStatKind.Added
+    case "MODIFIED":
+      return DiffStatKind.Modified
+    case "REMOVED":
+      return DiffStatKind.Removed
+    case "RENAMED":
+      return DiffStatKind.Renamed
+    default:
+      return name as DiffStatKind
+  }
+}
 export type DirectoryAsModuleOpts = {
   /**
    * An optional subpath of the directory which contains the module's configuration file.
@@ -1150,11 +1237,16 @@ export type DirectoryWithDirectoryOpts = {
   /**
    * A user:group to set for the copied directory and its contents.
    *
-   * The user and group must be an ID (1000:1000), not a name (foo:bar).
+   * The user and group can either be an ID (1000:1000) or a name (foo:bar).
    *
    * If the group is omitted, it defaults to the same as the user.
    */
   owner?: string
+
+  /**
+   * Permission given to the copied directory and contents (e.g., 0755).
+   */
+  permissions?: number
 }
 
 export type DirectoryWithFileOpts = {
@@ -1166,7 +1258,7 @@ export type DirectoryWithFileOpts = {
   /**
    * A user:group to set for the copied directory and its contents.
    *
-   * The user and group must be an ID (1000:1000), not a name (foo:bar).
+   * The user and group can either be an ID (1000:1000) or a name (foo:bar).
    *
    * If the group is omitted, it defaults to the same as the user.
    */
@@ -1263,6 +1355,13 @@ export type EnumValueTypeDefID = string & { __EnumValueTypeDefID: never }
 export type EnvChecksOpts = {
   /**
    * Only include checks matching the specified patterns
+   */
+  include?: string[]
+}
+
+export type EnvServicesOpts = {
+  /**
+   * Only include services matching the specified patterns
    */
   include?: string[]
 }
@@ -1712,6 +1811,11 @@ export type GitRepositoryTagsOpts = {
 export type GitRepositoryID = string & { __GitRepositoryID: never }
 
 /**
+ * The `HTTPStateID` scalar type represents an identifier for an object of type HTTPState.
+ */
+export type HTTPStateID = string & { __HTTPStateID: never }
+
+/**
  * The `HealthcheckConfigID` scalar type represents an identifier for an object of type HealthcheckConfig.
  */
 export type HealthcheckConfigID = string & { __HealthcheckConfigID: never }
@@ -1948,6 +2052,13 @@ export type ModuleServeOpts = {
   entrypoint?: boolean
 }
 
+export type ModuleServicesOpts = {
+  /**
+   * Only include services matching the specified patterns
+   */
+  include?: string[]
+}
+
 /**
  * The `ModuleConfigClientID` scalar type represents an identifier for an object of type ModuleConfigClient.
  */
@@ -2130,6 +2241,27 @@ export type PortForward = {
  */
 export type PortID = string & { __PortID: never }
 
+export type ClientCacheVolumeOpts = {
+  /**
+   * Identifier of the directory to use as the cache volume's root.
+   */
+  source?: Directory
+
+  /**
+   * Sharing mode of the cache volume.
+   */
+  sharing?: CacheSharingMode
+
+  /**
+   * A user:group to set for the cache volume root.
+   *
+   * The user and group can either be an ID (1000:1000) or a name (foo:bar).
+   *
+   * If the group is omitted, it defaults to the same as the user.
+   */
+  owner?: string
+}
+
 export type ClientContainerOpts = {
   /**
    * Platform to initialize the container with. Defaults to the native platform of the current engine
@@ -2138,6 +2270,11 @@ export type ClientContainerOpts = {
 }
 
 export type ClientCurrentTypeDefsOpts = {
+  /**
+   * Return the full referenced typedef closure instead of only top-level served typedefs.
+   */
+  returnAllTypes?: boolean
+
   /**
    * Strip core API functions from the Query type, leaving only module-sourced functions (constructors, entrypoint proxies, etc.).
    *
@@ -2225,6 +2362,11 @@ export type ClientHttpOpts = {
   permissions?: number
 
   /**
+   * Expected digest of the downloaded content (e.g., "sha256:...").
+   */
+  checksum?: string
+
+  /**
    * Secret used to populate the Authorization HTTP header
    */
   authHeader?: Secret
@@ -2284,6 +2426,11 @@ export type ClientSecretOpts = {
  * The `QueryID` scalar type represents an identifier for an object of type Query.
  */
 export type QueryID = string & { __QueryID: never }
+
+/**
+ * The `RemoteGitMirrorID` scalar type represents an identifier for an object of type RemoteGitMirror.
+ */
+export type RemoteGitMirrorID = string & { __RemoteGitMirrorID: never }
 
 /**
  * Expected return type of an execution
@@ -2714,6 +2861,16 @@ function TypeDefKindNameToValue(name: string): TypeDefKind {
   }
 }
 /**
+ * The `UpGroupID` scalar type represents an identifier for an object of type UpGroup.
+ */
+export type UpGroupID = string & { __UpGroupID: never }
+
+/**
+ * The `UpID` scalar type represents an identifier for an object of type Up.
+ */
+export type UpID = string & { __UpID: never }
+
+/**
  * The absence of a value.
  *
  * A Null Void is used as a placeholder for resolvers that do not return anything.
@@ -2754,6 +2911,13 @@ export type WorkspaceFindUpOpts = {
 export type WorkspaceGeneratorsOpts = {
   /**
    * Only include generators matching the specified patterns
+   */
+  include?: string[]
+}
+
+export type WorkspaceServicesOpts = {
+  /**
+   * Only include services matching the specified patterns
    */
   include?: string[]
 }
@@ -2997,6 +3161,14 @@ export class Binding extends BaseClient {
   }
 
   /**
+   * Retrieve the binding value, as type DiffStat
+   */
+  asDiffStat = (): DiffStat => {
+    const ctx = this._ctx.select("asDiffStat")
+    return new DiffStat(ctx)
+  }
+
+  /**
    * Retrieve the binding value, as type Directory
    */
   asDirectory = (): Directory => {
@@ -3058,6 +3230,14 @@ export class Binding extends BaseClient {
   asGitRepository = (): GitRepository => {
     const ctx = this._ctx.select("asGitRepository")
     return new GitRepository(ctx)
+  }
+
+  /**
+   * Retrieve the binding value, as type HTTPState
+   */
+  asHTTPState = (): HTTPState => {
+    const ctx = this._ctx.select("asHTTPState")
+    return new HTTPState(ctx)
   }
 
   /**
@@ -3153,6 +3333,22 @@ export class Binding extends BaseClient {
     const response: Awaited<string> = await ctx.execute()
 
     return response
+  }
+
+  /**
+   * Retrieve the binding value, as type Up
+   */
+  asUp = (): Up => {
+    const ctx = this._ctx.select("asUp")
+    return new Up(ctx)
+  }
+
+  /**
+   * Retrieve the binding value, as type UpGroup
+   */
+  asUpGroup = (): UpGroup => {
+    const ctx = this._ctx.select("asUpGroup")
+    return new UpGroup(ctx)
   }
 
   /**
@@ -3330,6 +3526,21 @@ export class Changeset extends BaseClient {
   before = (): Directory => {
     const ctx = this._ctx.select("before")
     return new Directory(ctx)
+  }
+
+  /**
+   * Structured per-path diff statistics (kind and line counts) for this changeset.
+   */
+  diffStats = async (): Promise<DiffStat[]> => {
+    type diffStats = {
+      id: DiffStatID
+    }
+
+    const ctx = this._ctx.select("diffStats").select("id")
+
+    const response: Awaited<diffStats[]> = await ctx.execute()
+
+    return response.map((r) => new Client(ctx.copy()).loadDiffStatFromID(r.id))
   }
 
   /**
@@ -3685,9 +3896,10 @@ export class CheckGroup extends BaseClient {
 
   /**
    * Execute all selected checks
+   * @param opts.failFast If true, stop running checks as soon as any check fails.
    */
-  run = (): CheckGroup => {
-    const ctx = this._ctx.select("run")
+  run = (opts?: CheckGroupRunOpts): CheckGroup => {
+    const ctx = this._ctx.select("run", { ...opts })
     return new CheckGroup(ctx)
   }
 
@@ -3698,6 +3910,37 @@ export class CheckGroup extends BaseClient {
    */
   with = (arg: (param: CheckGroup) => CheckGroup) => {
     return arg(this)
+  }
+}
+
+/**
+ * An internal persistent filesync mirror.
+ */
+export class ClientFilesyncMirror extends BaseClient {
+  private readonly _id?: ClientFilesyncMirrorID = undefined
+
+  /**
+   * Constructor is used for internal usage only, do not create object from it.
+   */
+  constructor(ctx?: Context, _id?: ClientFilesyncMirrorID) {
+    super(ctx)
+
+    this._id = _id
+  }
+
+  /**
+   * A unique identifier for this ClientFilesyncMirror.
+   */
+  id = async (): Promise<ClientFilesyncMirrorID> => {
+    if (this._id) {
+      return this._id
+    }
+
+    const ctx = this._ctx.select("id")
+
+    const response: Awaited<ClientFilesyncMirrorID> = await ctx.execute()
+
+    return response
   }
 }
 
@@ -4683,6 +4926,7 @@ export class Container extends BaseClient {
    * The user and group can either be an ID (1000:1000) or a name (foo:bar).
    *
    * If the group is omitted, it defaults to the same as the user.
+   * @param opts.readOnly Mount the directory read-only.
    * @param opts.expand Replace "${VAR}" or "$VAR" in the value of path according to the current environment variables defined in the container (e.g. "/$VAR/foo").
    */
   withMountedDirectory = (
@@ -5194,6 +5438,127 @@ export class CurrentModule extends BaseClient {
   }
 }
 
+export class DiffStat extends BaseClient {
+  private readonly _id?: DiffStatID = undefined
+  private readonly _addedLines?: number = undefined
+  private readonly _kind?: DiffStatKind = undefined
+  private readonly _oldPath?: string = undefined
+  private readonly _path?: string = undefined
+  private readonly _removedLines?: number = undefined
+
+  /**
+   * Constructor is used for internal usage only, do not create object from it.
+   */
+  constructor(
+    ctx?: Context,
+    _id?: DiffStatID,
+    _addedLines?: number,
+    _kind?: DiffStatKind,
+    _oldPath?: string,
+    _path?: string,
+    _removedLines?: number,
+  ) {
+    super(ctx)
+
+    this._id = _id
+    this._addedLines = _addedLines
+    this._kind = _kind
+    this._oldPath = _oldPath
+    this._path = _path
+    this._removedLines = _removedLines
+  }
+
+  /**
+   * A unique identifier for this DiffStat.
+   */
+  id = async (): Promise<DiffStatID> => {
+    if (this._id) {
+      return this._id
+    }
+
+    const ctx = this._ctx.select("id")
+
+    const response: Awaited<DiffStatID> = await ctx.execute()
+
+    return response
+  }
+
+  /**
+   * Number of added lines for this path.
+   */
+  addedLines = async (): Promise<number> => {
+    if (this._addedLines) {
+      return this._addedLines
+    }
+
+    const ctx = this._ctx.select("addedLines")
+
+    const response: Awaited<number> = await ctx.execute()
+
+    return response
+  }
+
+  /**
+   * Type of change.
+   */
+  kind = async (): Promise<DiffStatKind> => {
+    if (this._kind) {
+      return this._kind
+    }
+
+    const ctx = this._ctx.select("kind")
+
+    const response: Awaited<DiffStatKind> = await ctx.execute()
+
+    return DiffStatKindNameToValue(response)
+  }
+
+  /**
+   * Previous path of the file, set only for renames.
+   */
+  oldPath = async (): Promise<string> => {
+    if (this._oldPath) {
+      return this._oldPath
+    }
+
+    const ctx = this._ctx.select("oldPath")
+
+    const response: Awaited<string> = await ctx.execute()
+
+    return response
+  }
+
+  /**
+   * Path of the changed file or directory.
+   */
+  path = async (): Promise<string> => {
+    if (this._path) {
+      return this._path
+    }
+
+    const ctx = this._ctx.select("path")
+
+    const response: Awaited<string> = await ctx.execute()
+
+    return response
+  }
+
+  /**
+   * Number of removed lines for this path.
+   */
+  removedLines = async (): Promise<number> => {
+    if (this._removedLines) {
+      return this._removedLines
+    }
+
+    const ctx = this._ctx.select("removedLines")
+
+    const response: Awaited<number> = await ctx.execute()
+
+    return response
+  }
+}
+
 /**
  * A directory.
  */
@@ -5291,7 +5656,7 @@ export class Directory extends BaseClient {
    * @param path Path of the directory to change ownership of (e.g., "/").
    * @param owner A user:group to set for the mounted directory and its contents.
    *
-   * The user and group must be an ID (1000:1000), not a name (foo:bar).
+   * The user and group can either be an ID (1000:1000) or a name (foo:bar).
    *
    * If the group is omitted, it defaults to the same as the user.
    */
@@ -5562,9 +5927,10 @@ export class Directory extends BaseClient {
    * @param opts.gitignore Apply .gitignore filter rules inside the directory
    * @param opts.owner A user:group to set for the copied directory and its contents.
    *
-   * The user and group must be an ID (1000:1000), not a name (foo:bar).
+   * The user and group can either be an ID (1000:1000) or a name (foo:bar).
    *
    * If the group is omitted, it defaults to the same as the user.
+   * @param opts.permissions Permission given to the copied directory and contents (e.g., 0755).
    */
   withDirectory = (
     path: string,
@@ -5591,7 +5957,7 @@ export class Directory extends BaseClient {
    * @param opts.permissions Permission given to the copied file (e.g., 0600).
    * @param opts.owner A user:group to set for the copied directory and its contents.
    *
-   * The user and group must be an ID (1000:1000), not a name (foo:bar).
+   * The user and group can either be an ID (1000:1000) or a name (foo:bar).
    *
    * If the group is omitted, it defaults to the same as the user.
    */
@@ -5769,7 +6135,7 @@ export class Engine extends BaseClient {
   }
 
   /**
-   * The local (on-disk) cache for the Dagger engine
+   * The local engine cache state tracked by dagql
    */
   localCache = (): EngineCache => {
     const ctx = this._ctx.select("localCache")
@@ -6269,6 +6635,7 @@ export class EnumTypeDef extends BaseClient {
   }
 
   /**
+   * The members of the enum.
    * @deprecated use members instead
    */
   values = async (): Promise<EnumValueTypeDef[]> => {
@@ -6494,6 +6861,16 @@ export class Env extends BaseClient {
   }
 
   /**
+   * Return all services defined by the installed modules
+   * @param opts.include Only include services matching the specified patterns
+   * @experimental
+   */
+  services = (opts?: EnvServicesOpts): UpGroup => {
+    const ctx = this._ctx.select("services", { ...opts })
+    return new UpGroup(ctx)
+  }
+
+  /**
    * Create or update a binding of type Address in the environment
    * @param name The name of the binding
    * @param value The Address value to assign to the binding
@@ -6687,6 +7064,35 @@ export class Env extends BaseClient {
    */
   withCurrentModule = (): Env => {
     const ctx = this._ctx.select("withCurrentModule")
+    return new Env(ctx)
+  }
+
+  /**
+   * Create or update a binding of type DiffStat in the environment
+   * @param name The name of the binding
+   * @param value The DiffStat value to assign to the binding
+   * @param description The purpose of the input
+   */
+  withDiffStatInput = (
+    name: string,
+    value: DiffStat,
+    description: string,
+  ): Env => {
+    const ctx = this._ctx.select("withDiffStatInput", {
+      name,
+      value,
+      description,
+    })
+    return new Env(ctx)
+  }
+
+  /**
+   * Declare a desired DiffStat output to be assigned in the environment
+   * @param name The name of the binding
+   * @param description A description of the desired value of the binding
+   */
+  withDiffStatOutput = (name: string, description: string): Env => {
+    const ctx = this._ctx.select("withDiffStatOutput", { name, description })
     return new Env(ctx)
   }
 
@@ -6905,6 +7311,35 @@ export class Env extends BaseClient {
       name,
       description,
     })
+    return new Env(ctx)
+  }
+
+  /**
+   * Create or update a binding of type HTTPState in the environment
+   * @param name The name of the binding
+   * @param value The HTTPState value to assign to the binding
+   * @param description The purpose of the input
+   */
+  withHTTPStateInput = (
+    name: string,
+    value: HTTPState,
+    description: string,
+  ): Env => {
+    const ctx = this._ctx.select("withHTTPStateInput", {
+      name,
+      value,
+      description,
+    })
+    return new Env(ctx)
+  }
+
+  /**
+   * Declare a desired HTTPState output to be assigned in the environment
+   * @param name The name of the binding
+   * @param description A description of the desired value of the binding
+   */
+  withHTTPStateOutput = (name: string, description: string): Env => {
+    const ctx = this._ctx.select("withHTTPStateOutput", { name, description })
     return new Env(ctx)
   }
 
@@ -7241,6 +7676,56 @@ export class Env extends BaseClient {
    */
   withStringOutput = (name: string, description: string): Env => {
     const ctx = this._ctx.select("withStringOutput", { name, description })
+    return new Env(ctx)
+  }
+
+  /**
+   * Create or update a binding of type UpGroup in the environment
+   * @param name The name of the binding
+   * @param value The UpGroup value to assign to the binding
+   * @param description The purpose of the input
+   */
+  withUpGroupInput = (
+    name: string,
+    value: UpGroup,
+    description: string,
+  ): Env => {
+    const ctx = this._ctx.select("withUpGroupInput", {
+      name,
+      value,
+      description,
+    })
+    return new Env(ctx)
+  }
+
+  /**
+   * Declare a desired UpGroup output to be assigned in the environment
+   * @param name The name of the binding
+   * @param description A description of the desired value of the binding
+   */
+  withUpGroupOutput = (name: string, description: string): Env => {
+    const ctx = this._ctx.select("withUpGroupOutput", { name, description })
+    return new Env(ctx)
+  }
+
+  /**
+   * Create or update a binding of type Up in the environment
+   * @param name The name of the binding
+   * @param value The Up value to assign to the binding
+   * @param description The purpose of the input
+   */
+  withUpInput = (name: string, value: Up, description: string): Env => {
+    const ctx = this._ctx.select("withUpInput", { name, value, description })
+    return new Env(ctx)
+  }
+
+  /**
+   * Declare a desired Up output to be assigned in the environment
+   * @param name The name of the binding
+   * @param description A description of the desired value of the binding
+   */
+  withUpOutput = (name: string, description: string): Env => {
+    const ctx = this._ctx.select("withUpOutput", { name, description })
     return new Env(ctx)
   }
 
@@ -7836,7 +8321,7 @@ export class File extends BaseClient {
    * Change the owner of the file recursively.
    * @param owner A user:group to set for the file.
    *
-   * The user and group must be an ID (1000:1000), not a name (foo:bar).
+   * The user and group can either be an ID (1000:1000) or a name (foo:bar).
    *
    * If the group is omitted, it defaults to the same as the user.
    */
@@ -8254,6 +8739,14 @@ export class Function_ extends BaseClient {
    */
   withSourceMap = (sourceMap: SourceMap): Function_ => {
     const ctx = this._ctx.select("withSourceMap", { sourceMap })
+    return new Function_(ctx)
+  }
+
+  /**
+   * Returns the function with a flag indicating it returns a service for dagger up.
+   */
+  withUp = (): Function_ => {
+    const ctx = this._ctx.select("withUp")
     return new Function_(ctx)
   }
 
@@ -8776,7 +9269,7 @@ export class Generator extends BaseClient {
   }
 
   /**
-   * The generated changeset
+   * The generated changeset from the last run
    */
   changes = (): Changeset => {
     const ctx = this._ctx.select("changes")
@@ -8814,7 +9307,7 @@ export class Generator extends BaseClient {
   }
 
   /**
-   * Wether changeset from the generator execution is empty or not
+   * Whether changeset from the last generator run is empty or not
    */
   isEmpty = async (): Promise<boolean> => {
     if (this._isEmpty) {
@@ -8910,7 +9403,7 @@ export class GeneratorGroup extends BaseClient {
   }
 
   /**
-   * The combined changes from the generators execution
+   * The combined changes from the last run of the generators
    *
    * If any conflict occurs, for instance if the same file is modified by multiple generators, or if a file is both modified and deleted, an error is raised and the merge of the changesets will failed.
    *
@@ -8930,7 +9423,7 @@ export class GeneratorGroup extends BaseClient {
   }
 
   /**
-   * Whether the generated changeset is empty or not
+   * Whether the generated changeset from the last run is empty or not
    */
   isEmpty = async (): Promise<boolean> => {
     if (this._isEmpty) {
@@ -9198,6 +9691,37 @@ export class GitRepository extends BaseClient {
     const ctx = this._ctx.select("url")
 
     const response: Awaited<string> = await ctx.execute()
+
+    return response
+  }
+}
+
+/**
+ * An internal persistent HTTP state.
+ */
+export class HTTPState extends BaseClient {
+  private readonly _id?: HTTPStateID = undefined
+
+  /**
+   * Constructor is used for internal usage only, do not create object from it.
+   */
+  constructor(ctx?: Context, _id?: HTTPStateID) {
+    super(ctx)
+
+    this._id = _id
+  }
+
+  /**
+   * A unique identifier for this HTTPState.
+   */
+  id = async (): Promise<HTTPStateID> => {
+    if (this._id) {
+      return this._id
+    }
+
+    const ctx = this._ctx.select("id")
+
+    const response: Awaited<HTTPStateID> = await ctx.execute()
 
     return response
   }
@@ -10617,6 +11141,16 @@ export class Module_ extends BaseClient {
   }
 
   /**
+   * Return all services defined by the module
+   * @param opts.include Only include services matching the specified patterns
+   * @experimental
+   */
+  services = (opts?: ModuleServicesOpts): UpGroup => {
+    const ctx = this._ctx.select("services", { ...opts })
+    return new UpGroup(ctx)
+  }
+
+  /**
    * The source for the module.
    */
   source = (): ModuleSource => {
@@ -11487,7 +12021,7 @@ export class ObjectTypeDef extends BaseClient {
   }
 
   /**
-   * The function used to construct new instances of this object, if any
+   * The function used to construct new instances of this object, if any.
    */
   constructor_ = (): Function_ => {
     const ctx = this._ctx.select("constructor")
@@ -11754,9 +12288,24 @@ export class Client extends BaseClient {
   /**
    * Constructs a cache volume for a given cache key.
    * @param key A string identifier to target this cache volume (e.g., "modules-cache").
+   * @param opts.source Identifier of the directory to use as the cache volume's root.
+   * @param opts.sharing Sharing mode of the cache volume.
+   * @param opts.owner A user:group to set for the cache volume root.
+   *
+   * The user and group can either be an ID (1000:1000) or a name (foo:bar).
+   *
+   * If the group is omitted, it defaults to the same as the user.
    */
-  cacheVolume = (key: string): CacheVolume => {
-    const ctx = this._ctx.select("cacheVolume", { key })
+  cacheVolume = (key: string, opts?: ClientCacheVolumeOpts): CacheVolume => {
+    const metadata = {
+      sharing: { is_enum: true, value_to_name: CacheSharingModeValueToName },
+    }
+
+    const ctx = this._ctx.select("cacheVolume", {
+      key,
+      ...opts,
+      __metadata: metadata,
+    })
     return new CacheVolume(ctx)
   }
 
@@ -11820,6 +12369,7 @@ export class Client extends BaseClient {
 
   /**
    * The TypeDef representations of the objects currently being served in the session.
+   * @param opts.returnAllTypes Return the full referenced typedef closure instead of only top-level served typedefs.
    * @param opts.hideCore Strip core API functions from the Query type, leaving only module-sourced functions (constructors, entrypoint proxies, etc.).
    *
    * Core types (Container, Directory, etc.) are kept so return types and method chaining still work.
@@ -11965,6 +12515,7 @@ export class Client extends BaseClient {
    * @param url HTTP url to get the content from (e.g., "https://docs.dagger.io").
    * @param opts.name File name to use for the file. Defaults to the last part of the URL.
    * @param opts.permissions Permissions to set on the file.
+   * @param opts.checksum Expected digest of the downloaded content (e.g., "sha256:...").
    * @param opts.authHeader Secret used to populate the Authorization HTTP header
    * @param opts.experimentalServiceHost A service which must be started before the URL is fetched.
    */
@@ -12041,6 +12592,16 @@ export class Client extends BaseClient {
   }
 
   /**
+   * Load a ClientFilesyncMirror from its ID.
+   */
+  loadClientFilesyncMirrorFromID = (
+    id: ClientFilesyncMirrorID,
+  ): ClientFilesyncMirror => {
+    const ctx = this._ctx.select("loadClientFilesyncMirrorFromID", { id })
+    return new ClientFilesyncMirror(ctx)
+  }
+
+  /**
    * Load a Cloud from its ID.
    */
   loadCloudFromID = (id: CloudID): Cloud => {
@@ -12062,6 +12623,14 @@ export class Client extends BaseClient {
   loadCurrentModuleFromID = (id: CurrentModuleID): CurrentModule => {
     const ctx = this._ctx.select("loadCurrentModuleFromID", { id })
     return new CurrentModule(ctx)
+  }
+
+  /**
+   * Load a DiffStat from its ID.
+   */
+  loadDiffStatFromID = (id: DiffStatID): DiffStat => {
+    const ctx = this._ctx.select("loadDiffStatFromID", { id })
+    return new DiffStat(ctx)
   }
 
   /**
@@ -12253,6 +12822,14 @@ export class Client extends BaseClient {
   }
 
   /**
+   * Load a HTTPState from its ID.
+   */
+  loadHTTPStateFromID = (id: HTTPStateID): HTTPState => {
+    const ctx = this._ctx.select("loadHTTPStateFromID", { id })
+    return new HTTPState(ctx)
+  }
+
+  /**
    * Load a HealthcheckConfig from its ID.
    */
   loadHealthcheckConfigFromID = (
@@ -12377,6 +12954,14 @@ export class Client extends BaseClient {
   }
 
   /**
+   * Load a RemoteGitMirror from its ID.
+   */
+  loadRemoteGitMirrorFromID = (id: RemoteGitMirrorID): RemoteGitMirror => {
+    const ctx = this._ctx.select("loadRemoteGitMirrorFromID", { id })
+    return new RemoteGitMirror(ctx)
+  }
+
+  /**
    * Load a SDKConfig from its ID.
    */
   loadSDKConfigFromID = (id: SDKConfigID): SDKConfig => {
@@ -12462,6 +13047,22 @@ export class Client extends BaseClient {
   loadTypeDefFromID = (id: TypeDefID): TypeDef => {
     const ctx = this._ctx.select("loadTypeDefFromID", { id })
     return new TypeDef(ctx)
+  }
+
+  /**
+   * Load a Up from its ID.
+   */
+  loadUpFromID = (id: UpID): Up => {
+    const ctx = this._ctx.select("loadUpFromID", { id })
+    return new Up(ctx)
+  }
+
+  /**
+   * Load a UpGroup from its ID.
+   */
+  loadUpGroupFromID = (id: UpGroupID): UpGroup => {
+    const ctx = this._ctx.select("loadUpGroupFromID", { id })
+    return new UpGroup(ctx)
   }
 
   /**
@@ -12570,6 +13171,37 @@ export class Client extends BaseClient {
    */
   with = (arg: (param: Client) => Client) => {
     return arg(this)
+  }
+}
+
+/**
+ * An internal persistent bare git mirror.
+ */
+export class RemoteGitMirror extends BaseClient {
+  private readonly _id?: RemoteGitMirrorID = undefined
+
+  /**
+   * Constructor is used for internal usage only, do not create object from it.
+   */
+  constructor(ctx?: Context, _id?: RemoteGitMirrorID) {
+    super(ctx)
+
+    this._id = _id
+  }
+
+  /**
+   * A unique identifier for this RemoteGitMirror.
+   */
+  id = async (): Promise<RemoteGitMirrorID> => {
+    if (this._id) {
+      return this._id
+    }
+
+    const ctx = this._ctx.select("id")
+
+    const response: Awaited<RemoteGitMirrorID> = await ctx.execute()
+
+    return response
   }
 }
 
@@ -13515,6 +14147,7 @@ export class Terminal extends BaseClient {
 export class TypeDef extends BaseClient {
   private readonly _id?: TypeDefID = undefined
   private readonly _kind?: TypeDefKind = undefined
+  private readonly _name?: string = undefined
   private readonly _optional?: boolean = undefined
 
   /**
@@ -13524,12 +14157,14 @@ export class TypeDef extends BaseClient {
     ctx?: Context,
     _id?: TypeDefID,
     _kind?: TypeDefKind,
+    _name?: string,
     _optional?: boolean,
   ) {
     super(ctx)
 
     this._id = _id
     this._kind = _kind
+    this._name = _name
     this._optional = _optional
   }
 
@@ -13609,6 +14244,21 @@ export class TypeDef extends BaseClient {
     const response: Awaited<TypeDefKind> = await ctx.execute()
 
     return TypeDefKindNameToValue(response)
+  }
+
+  /**
+   * The canonical non-optional name of the type.
+   */
+  name = async (): Promise<string> => {
+    if (this._name) {
+      return this._name
+    }
+
+    const ctx = this._ctx.select("name")
+
+    const response: Awaited<string> = await ctx.execute()
+
+    return response
   }
 
   /**
@@ -13765,6 +14415,169 @@ export class TypeDef extends BaseClient {
    * This is useful for reusability and readability by not breaking the calling chain.
    */
   with = (arg: (param: TypeDef) => TypeDef) => {
+    return arg(this)
+  }
+}
+
+export class Up extends BaseClient {
+  private readonly _id?: UpID = undefined
+  private readonly _description?: string = undefined
+  private readonly _name?: string = undefined
+
+  /**
+   * Constructor is used for internal usage only, do not create object from it.
+   */
+  constructor(
+    ctx?: Context,
+    _id?: UpID,
+    _description?: string,
+    _name?: string,
+  ) {
+    super(ctx)
+
+    this._id = _id
+    this._description = _description
+    this._name = _name
+  }
+
+  /**
+   * A unique identifier for this Up.
+   */
+  id = async (): Promise<UpID> => {
+    if (this._id) {
+      return this._id
+    }
+
+    const ctx = this._ctx.select("id")
+
+    const response: Awaited<UpID> = await ctx.execute()
+
+    return response
+  }
+
+  /**
+   * The description of the service
+   */
+  description = async (): Promise<string> => {
+    if (this._description) {
+      return this._description
+    }
+
+    const ctx = this._ctx.select("description")
+
+    const response: Awaited<string> = await ctx.execute()
+
+    return response
+  }
+
+  /**
+   * Return the fully qualified name of the service
+   */
+  name = async (): Promise<string> => {
+    if (this._name) {
+      return this._name
+    }
+
+    const ctx = this._ctx.select("name")
+
+    const response: Awaited<string> = await ctx.execute()
+
+    return response
+  }
+
+  /**
+   * The original module in which the service has been defined
+   */
+  originalModule = (): Module_ => {
+    const ctx = this._ctx.select("originalModule")
+    return new Module_(ctx)
+  }
+
+  /**
+   * The path of the service within its module
+   */
+  path = async (): Promise<string[]> => {
+    const ctx = this._ctx.select("path")
+
+    const response: Awaited<string[]> = await ctx.execute()
+
+    return response
+  }
+
+  /**
+   * Execute the service function
+   */
+  run = (): Up => {
+    const ctx = this._ctx.select("run")
+    return new Up(ctx)
+  }
+
+  /**
+   * Call the provided function with current Up.
+   *
+   * This is useful for reusability and readability by not breaking the calling chain.
+   */
+  with = (arg: (param: Up) => Up) => {
+    return arg(this)
+  }
+}
+
+export class UpGroup extends BaseClient {
+  private readonly _id?: UpGroupID = undefined
+
+  /**
+   * Constructor is used for internal usage only, do not create object from it.
+   */
+  constructor(ctx?: Context, _id?: UpGroupID) {
+    super(ctx)
+
+    this._id = _id
+  }
+
+  /**
+   * A unique identifier for this UpGroup.
+   */
+  id = async (): Promise<UpGroupID> => {
+    if (this._id) {
+      return this._id
+    }
+
+    const ctx = this._ctx.select("id")
+
+    const response: Awaited<UpGroupID> = await ctx.execute()
+
+    return response
+  }
+
+  /**
+   * Return a list of individual services and their details
+   */
+  list = async (): Promise<Up[]> => {
+    type list = {
+      id: UpID
+    }
+
+    const ctx = this._ctx.select("list").select("id")
+
+    const response: Awaited<list[]> = await ctx.execute()
+
+    return response.map((r) => new Client(ctx.copy()).loadUpFromID(r.id))
+  }
+
+  /**
+   * Execute all selected service functions
+   */
+  run = (): UpGroup => {
+    const ctx = this._ctx.select("run")
+    return new UpGroup(ctx)
+  }
+
+  /**
+   * Call the provided function with current UpGroup.
+   *
+   * This is useful for reusability and readability by not breaking the calling chain.
+   */
+  with = (arg: (param: UpGroup) => UpGroup) => {
     return arg(this)
   }
 }
@@ -13980,6 +14793,15 @@ export class Workspace extends BaseClient {
     const response: Awaited<string> = await ctx.execute()
 
     return response
+  }
+
+  /**
+   * Return all services from modules loaded in the workspace.
+   * @param opts.include Only include services matching the specified patterns
+   */
+  services = (opts?: WorkspaceServicesOpts): UpGroup => {
+    const ctx = this._ctx.select("services", { ...opts })
+    return new UpGroup(ctx)
   }
 }
 

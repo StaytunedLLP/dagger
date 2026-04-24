@@ -41,6 +41,11 @@ class CheckID(Scalar):
     type Check."""
 
 
+class ClientFilesyncMirrorID(Scalar):
+    """The `ClientFilesyncMirrorID` scalar type represents an identifier
+    for an object of type ClientFilesyncMirror."""
+
+
 class CloudID(Scalar):
     """The `CloudID` scalar type represents an identifier for an object of
     type Cloud."""
@@ -54,6 +59,11 @@ class ContainerID(Scalar):
 class CurrentModuleID(Scalar):
     """The `CurrentModuleID` scalar type represents an identifier for an
     object of type CurrentModule."""
+
+
+class DiffStatID(Scalar):
+    """The `DiffStatID` scalar type represents an identifier for an object
+    of type DiffStat."""
 
 
 class DirectoryID(Scalar):
@@ -171,6 +181,11 @@ class GitRepositoryID(Scalar):
     object of type GitRepository."""
 
 
+class HTTPStateID(Scalar):
+    """The `HTTPStateID` scalar type represents an identifier for an
+    object of type HTTPState."""
+
+
 class HealthcheckConfigID(Scalar):
     """The `HealthcheckConfigID` scalar type represents an identifier for
     an object of type HealthcheckConfig."""
@@ -256,6 +271,11 @@ class QueryID(Scalar):
     type Query."""
 
 
+class RemoteGitMirrorID(Scalar):
+    """The `RemoteGitMirrorID` scalar type represents an identifier for an
+    object of type RemoteGitMirror."""
+
+
 class SDKConfigID(Scalar):
     """The `SDKConfigID` scalar type represents an identifier for an
     object of type SDKConfig."""
@@ -311,6 +331,16 @@ class TypeDefID(Scalar):
     of type TypeDef."""
 
 
+class UpGroupID(Scalar):
+    """The `UpGroupID` scalar type represents an identifier for an object
+    of type UpGroup."""
+
+
+class UpID(Scalar):
+    """The `UpID` scalar type represents an identifier for an object of
+    type Up."""
+
+
 class Void(Scalar):
     """The absence of a value.  A Null Void is used as a placeholder for
     resolvers that do not return anything."""
@@ -363,6 +393,22 @@ class ChangesetsMergeConflict(Enum):
 
     FAIL_EARLY = "FAIL_EARLY"
     """Fail before attempting merge if file-level conflicts are detected between any changesets"""
+
+
+class DiffStatKind(Enum):
+    """The type of change for a diff stat entry."""
+
+    ADDED = "ADDED"
+    """A file or directory was added."""
+
+    MODIFIED = "MODIFIED"
+    """A file was modified."""
+
+    REMOVED = "REMOVED"
+    """A file or directory was removed."""
+
+    RENAMED = "RENAMED"
+    """A file was renamed."""
 
 
 class ExistsType(Enum):
@@ -773,6 +819,12 @@ class Binding(Type):
         _ctx = self._select("asContainer", _args)
         return Container(_ctx)
 
+    def as_diff_stat(self) -> "DiffStat":
+        """Retrieve the binding value, as type DiffStat"""
+        _args: list[Arg] = []
+        _ctx = self._select("asDiffStat", _args)
+        return DiffStat(_ctx)
+
     def as_directory(self) -> "Directory":
         """Retrieve the binding value, as type Directory"""
         _args: list[Arg] = []
@@ -820,6 +872,12 @@ class Binding(Type):
         _args: list[Arg] = []
         _ctx = self._select("asGitRepository", _args)
         return GitRepository(_ctx)
+
+    def as_http_state(self) -> "HTTPState":
+        """Retrieve the binding value, as type HTTPState"""
+        _args: list[Arg] = []
+        _ctx = self._select("asHTTPState", _args)
+        return HTTPState(_ctx)
 
     def as_json_value(self) -> "JSONValue":
         """Retrieve the binding value, as type JSONValue"""
@@ -901,6 +959,18 @@ class Binding(Type):
         _args: list[Arg] = []
         _ctx = self._select("asString", _args)
         return await _ctx.execute(str | None)
+
+    def as_up(self) -> "Up":
+        """Retrieve the binding value, as type Up"""
+        _args: list[Arg] = []
+        _ctx = self._select("asUp", _args)
+        return Up(_ctx)
+
+    def as_up_group(self) -> "UpGroup":
+        """Retrieve the binding value, as type UpGroup"""
+        _args: list[Arg] = []
+        _ctx = self._select("asUpGroup", _args)
+        return UpGroup(_ctx)
 
     def as_workspace(self) -> "Workspace":
         """Retrieve the binding value, as type Workspace"""
@@ -1087,6 +1157,14 @@ class Changeset(Type):
         _args: list[Arg] = []
         _ctx = self._select("before", _args)
         return Directory(_ctx)
+
+    async def diff_stats(self) -> list["DiffStat"]:
+        """Structured per-path diff statistics (kind and line counts) for this
+        changeset.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("diffStats", _args)
+        return await _ctx.execute_object_list(DiffStat)
 
     async def export(self, path: str) -> str:
         """Applies the diff represented by this changeset to a path on the host.
@@ -1499,9 +1577,17 @@ class CheckGroup(Type):
         _ctx = self._select("report", _args)
         return File(_ctx)
 
-    def run(self) -> Self:
-        """Execute all selected checks"""
-        _args: list[Arg] = []
+    def run(self, *, fail_fast: bool | None = None) -> Self:
+        """Execute all selected checks
+
+        Parameters
+        ----------
+        fail_fast:
+            If true, stop running checks as soon as any check fails.
+        """
+        _args = [
+            Arg("failFast", fail_fast, None),
+        ]
         _ctx = self._select("run", _args)
         return CheckGroup(_ctx)
 
@@ -1511,6 +1597,35 @@ class CheckGroup(Type):
         This is useful for reusability and readability by not breaking the calling chain.
         """
         return cb(self)
+
+
+@typecheck
+class ClientFilesyncMirror(Type):
+    """An internal persistent filesync mirror."""
+
+    async def id(self) -> ClientFilesyncMirrorID:
+        """A unique identifier for this ClientFilesyncMirror.
+
+        Note
+        ----
+        This is lazily evaluated, no operation is actually run.
+
+        Returns
+        -------
+        ClientFilesyncMirrorID
+            The `ClientFilesyncMirrorID` scalar type represents an identifier
+            for an object of type ClientFilesyncMirror.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("id", _args)
+        return await _ctx.execute(ClientFilesyncMirrorID)
 
 
 @typecheck
@@ -2576,6 +2691,7 @@ class Container(Type):
         gitignore: bool | None = False,
         owner: str | None = "",
         expand: bool | None = False,
+        permissions: int | None = None,
     ) -> Self:
         """Return a new container snapshot, with a directory added to its
         filesystem
@@ -2603,6 +2719,7 @@ class Container(Type):
             Replace "${VAR}" or "$VAR" in the value of path according to the
             current environment variables defined in the container (e.g.
             "/$VAR/foo").
+        permissions:
         """
         _args = [
             Arg("path", path),
@@ -2612,6 +2729,7 @@ class Container(Type):
             Arg("gitignore", gitignore, False),
             Arg("owner", owner, ""),
             Arg("expand", expand, False),
+            Arg("permissions", permissions, None),
         ]
         _ctx = self._select("withDirectory", _args)
         return Container(_ctx)
@@ -3013,6 +3131,7 @@ class Container(Type):
         source: "Directory",
         *,
         owner: str | None = "",
+        read_only: bool | None = False,
         expand: bool | None = False,
     ) -> Self:
         """Retrieves this container plus a directory mounted at the given path.
@@ -3028,6 +3147,8 @@ class Container(Type):
             The user and group can either be an ID (1000:1000) or a name
             (foo:bar).
             If the group is omitted, it defaults to the same as the user.
+        read_only:
+            Mount the directory read-only.
         expand:
             Replace "${VAR}" or "$VAR" in the value of path according to the
             current environment variables defined in the container (e.g.
@@ -3037,6 +3158,7 @@ class Container(Type):
             Arg("path", path),
             Arg("source", source),
             Arg("owner", owner, ""),
+            Arg("readOnly", read_only, False),
             Arg("expand", expand, False),
         ]
         _ctx = self._select("withMountedDirectory", _args)
@@ -3826,6 +3948,136 @@ class CurrentModule(Type):
 
 
 @typecheck
+class DiffStat(Type):
+    async def added_lines(self) -> int:
+        """Number of added lines for this path.
+
+        Returns
+        -------
+        int
+            The `Int` scalar type represents non-fractional signed whole
+            numeric values. Int can represent values between -(2^31) and 2^31
+            - 1.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("addedLines", _args)
+        return await _ctx.execute(int)
+
+    async def id(self) -> DiffStatID:
+        """A unique identifier for this DiffStat.
+
+        Note
+        ----
+        This is lazily evaluated, no operation is actually run.
+
+        Returns
+        -------
+        DiffStatID
+            The `DiffStatID` scalar type represents an identifier for an
+            object of type DiffStat.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("id", _args)
+        return await _ctx.execute(DiffStatID)
+
+    async def kind(self) -> DiffStatKind:
+        """Type of change.
+
+        Returns
+        -------
+        DiffStatKind
+            The type of change for a diff stat entry.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("kind", _args)
+        return await _ctx.execute(DiffStatKind)
+
+    async def old_path(self) -> str | None:
+        """Previous path of the file, set only for renames.
+
+        Returns
+        -------
+        str | None
+            The `String` scalar type represents textual data, represented as
+            UTF-8 character sequences. The String type is most often used by
+            GraphQL to represent free-form human-readable text.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("oldPath", _args)
+        return await _ctx.execute(str | None)
+
+    async def path(self) -> str:
+        """Path of the changed file or directory.
+
+        Returns
+        -------
+        str
+            The `String` scalar type represents textual data, represented as
+            UTF-8 character sequences. The String type is most often used by
+            GraphQL to represent free-form human-readable text.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("path", _args)
+        return await _ctx.execute(str)
+
+    async def removed_lines(self) -> int:
+        """Number of removed lines for this path.
+
+        Returns
+        -------
+        int
+            The `Int` scalar type represents non-fractional signed whole
+            numeric values. Int can represent values between -(2^31) and 2^31
+            - 1.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("removedLines", _args)
+        return await _ctx.execute(int)
+
+
+@typecheck
 class Directory(Type):
     """A directory."""
 
@@ -3904,7 +4156,7 @@ class Directory(Type):
             Path of the directory to change ownership of (e.g., "/").
         owner:
             A user:group to set for the mounted directory and its contents.
-            The user and group must be an ID (1000:1000), not a name
+            The user and group can either be an ID (1000:1000) or a name
             (foo:bar).
             If the group is omitted, it defaults to the same as the user.
         """
@@ -4438,6 +4690,7 @@ class Directory(Type):
         include: list[str] | None = None,
         gitignore: bool | None = False,
         owner: str | None = "",
+        permissions: int | None = None,
     ) -> Self:
         """Return a snapshot with a directory added
 
@@ -4457,9 +4710,12 @@ class Directory(Type):
             Apply .gitignore filter rules inside the directory
         owner:
             A user:group to set for the copied directory and its contents.
-            The user and group must be an ID (1000:1000), not a name
+            The user and group can either be an ID (1000:1000) or a name
             (foo:bar).
             If the group is omitted, it defaults to the same as the user.
+        permissions:
+            Permission given to the copied directory and contents (e.g.,
+            0755).
         """
         _args = [
             Arg("path", path),
@@ -4468,6 +4724,7 @@ class Directory(Type):
             Arg("include", [] if include is None else include, []),
             Arg("gitignore", gitignore, False),
             Arg("owner", owner, ""),
+            Arg("permissions", permissions, None),
         ]
         _ctx = self._select("withDirectory", _args)
         return Directory(_ctx)
@@ -4508,7 +4765,7 @@ class Directory(Type):
             Permission given to the copied file (e.g., 0600).
         owner:
             A user:group to set for the copied directory and its contents.
-            The user and group must be an ID (1000:1000), not a name
+            The user and group can either be an ID (1000:1000) or a name
             (foo:bar).
             If the group is omitted, it defaults to the same as the user.
         """
@@ -4771,7 +5028,7 @@ class Engine(Type):
         return await _ctx.execute(EngineID)
 
     def local_cache(self) -> "EngineCache":
-        """The local (on-disk) cache for the Dagger engine"""
+        """The local engine cache state tracked by dagql"""
         _args: list[Arg] = []
         _ctx = self._select("localCache", _args)
         return EngineCache(_ctx)
@@ -5308,8 +5565,10 @@ class EnumTypeDef(Type):
         return await _ctx.execute(str)
 
     async def values(self) -> list["EnumValueTypeDef"]:
-        """.. deprecated::
-        use members instead
+        """The members of the enum.
+
+        .. deprecated::
+            use members instead
         """
         warnings.warn(
             'Method "values" is deprecated: use members instead',
@@ -5534,6 +5793,28 @@ class Env(Type):
         _args: list[Arg] = []
         _ctx = self._select("outputs", _args)
         return await _ctx.execute_object_list(Binding)
+
+    def services(
+        self,
+        *,
+        include: list[str] | None = None,
+    ) -> "UpGroup":
+        """Return all services defined by the installed modules
+
+        .. caution::
+            Experimental: Services API is highly experimental and may be
+            removed or replaced entirely.
+
+        Parameters
+        ----------
+        include:
+            Only include services matching the specified patterns
+        """
+        _args = [
+            Arg("include", include, None),
+        ]
+        _ctx = self._select("services", _args)
+        return UpGroup(_ctx)
 
     def with_address_input(
         self,
@@ -5838,6 +6119,48 @@ class Env(Type):
         """
         _args: list[Arg] = []
         _ctx = self._select("withCurrentModule", _args)
+        return Env(_ctx)
+
+    def with_diff_stat_input(
+        self,
+        name: str,
+        value: DiffStat,
+        description: str,
+    ) -> Self:
+        """Create or update a binding of type DiffStat in the environment
+
+        Parameters
+        ----------
+        name:
+            The name of the binding
+        value:
+            The DiffStat value to assign to the binding
+        description:
+            The purpose of the input
+        """
+        _args = [
+            Arg("name", name),
+            Arg("value", value),
+            Arg("description", description),
+        ]
+        _ctx = self._select("withDiffStatInput", _args)
+        return Env(_ctx)
+
+    def with_diff_stat_output(self, name: str, description: str) -> Self:
+        """Declare a desired DiffStat output to be assigned in the environment
+
+        Parameters
+        ----------
+        name:
+            The name of the binding
+        description:
+            A description of the desired value of the binding
+        """
+        _args = [
+            Arg("name", name),
+            Arg("description", description),
+        ]
+        _ctx = self._select("withDiffStatOutput", _args)
         return Env(_ctx)
 
     def with_directory_input(
@@ -6176,6 +6499,48 @@ class Env(Type):
             Arg("description", description),
         ]
         _ctx = self._select("withGitRepositoryOutput", _args)
+        return Env(_ctx)
+
+    def with_http_state_input(
+        self,
+        name: str,
+        value: "HTTPState",
+        description: str,
+    ) -> Self:
+        """Create or update a binding of type HTTPState in the environment
+
+        Parameters
+        ----------
+        name:
+            The name of the binding
+        value:
+            The HTTPState value to assign to the binding
+        description:
+            The purpose of the input
+        """
+        _args = [
+            Arg("name", name),
+            Arg("value", value),
+            Arg("description", description),
+        ]
+        _ctx = self._select("withHTTPStateInput", _args)
+        return Env(_ctx)
+
+    def with_http_state_output(self, name: str, description: str) -> Self:
+        """Declare a desired HTTPState output to be assigned in the environment
+
+        Parameters
+        ----------
+        name:
+            The name of the binding
+        description:
+            A description of the desired value of the binding
+        """
+        _args = [
+            Arg("name", name),
+            Arg("description", description),
+        ]
+        _ctx = self._select("withHTTPStateOutput", _args)
         return Env(_ctx)
 
     def with_json_value_input(
@@ -6677,6 +7042,90 @@ class Env(Type):
             Arg("description", description),
         ]
         _ctx = self._select("withStringOutput", _args)
+        return Env(_ctx)
+
+    def with_up_group_input(
+        self,
+        name: str,
+        value: "UpGroup",
+        description: str,
+    ) -> Self:
+        """Create or update a binding of type UpGroup in the environment
+
+        Parameters
+        ----------
+        name:
+            The name of the binding
+        value:
+            The UpGroup value to assign to the binding
+        description:
+            The purpose of the input
+        """
+        _args = [
+            Arg("name", name),
+            Arg("value", value),
+            Arg("description", description),
+        ]
+        _ctx = self._select("withUpGroupInput", _args)
+        return Env(_ctx)
+
+    def with_up_group_output(self, name: str, description: str) -> Self:
+        """Declare a desired UpGroup output to be assigned in the environment
+
+        Parameters
+        ----------
+        name:
+            The name of the binding
+        description:
+            A description of the desired value of the binding
+        """
+        _args = [
+            Arg("name", name),
+            Arg("description", description),
+        ]
+        _ctx = self._select("withUpGroupOutput", _args)
+        return Env(_ctx)
+
+    def with_up_input(
+        self,
+        name: str,
+        value: "Up",
+        description: str,
+    ) -> Self:
+        """Create or update a binding of type Up in the environment
+
+        Parameters
+        ----------
+        name:
+            The name of the binding
+        value:
+            The Up value to assign to the binding
+        description:
+            The purpose of the input
+        """
+        _args = [
+            Arg("name", name),
+            Arg("value", value),
+            Arg("description", description),
+        ]
+        _ctx = self._select("withUpInput", _args)
+        return Env(_ctx)
+
+    def with_up_output(self, name: str, description: str) -> Self:
+        """Declare a desired Up output to be assigned in the environment
+
+        Parameters
+        ----------
+        name:
+            The name of the binding
+        description:
+            A description of the desired value of the binding
+        """
+        _args = [
+            Arg("name", name),
+            Arg("description", description),
+        ]
+        _ctx = self._select("withUpOutput", _args)
         return Env(_ctx)
 
     def with_workspace(self, workspace: Directory) -> Self:
@@ -7279,7 +7728,7 @@ class File(Type):
         ----------
         owner:
             A user:group to set for the file.
-            The user and group must be an ID (1000:1000), not a name
+            The user and group can either be an ID (1000:1000) or a name
             (foo:bar).
             If the group is omitted, it defaults to the same as the user.
         """
@@ -7885,6 +8334,14 @@ class Function(Type):
         _ctx = self._select("withSourceMap", _args)
         return Function(_ctx)
 
+    def with_up(self) -> Self:
+        """Returns the function with a flag indicating it returns a service for
+        dagger up.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("withUp", _args)
+        return Function(_ctx)
+
     def with_(self, cb: Callable[["Function"], "Function"]) -> "Function":
         """Call the provided callable with current Function.
 
@@ -8413,7 +8870,7 @@ class GeneratedCode(Type):
 @typecheck
 class Generator(Type):
     def changes(self) -> Changeset:
-        """The generated changeset"""
+        """The generated changeset from the last run"""
         _args: list[Arg] = []
         _ctx = self._select("changes", _args)
         return Changeset(_ctx)
@@ -8483,7 +8940,7 @@ class Generator(Type):
         return await _ctx.execute(GeneratorID)
 
     async def is_empty(self) -> bool:
-        """Wether changeset from the generator execution is empty or not
+        """Whether changeset from the last generator run is empty or not
 
         Returns
         -------
@@ -8571,7 +9028,7 @@ class GeneratorGroup(Type):
         on_conflict: ChangesetsMergeConflict
         | None = ChangesetsMergeConflict.FAIL_EARLY,
     ) -> Changeset:
-        """The combined changes from the generators execution
+        """The combined changes from the last run of the generators
 
         If any conflict occurs, for instance if the same file is modified by
         multiple generators, or if a file is both modified and deleted, an
@@ -8616,7 +9073,7 @@ class GeneratorGroup(Type):
         return await _ctx.execute(GeneratorGroupID)
 
     async def is_empty(self) -> bool:
-        """Whether the generated changeset is empty or not
+        """Whether the generated changeset from the last run is empty or not
 
         Returns
         -------
@@ -8962,6 +9419,35 @@ class GitRepository(Type):
         _args: list[Arg] = []
         _ctx = self._select("url", _args)
         return await _ctx.execute(str | None)
+
+
+@typecheck
+class HTTPState(Type):
+    """An internal persistent HTTP state."""
+
+    async def id(self) -> HTTPStateID:
+        """A unique identifier for this HTTPState.
+
+        Note
+        ----
+        This is lazily evaluated, no operation is actually run.
+
+        Returns
+        -------
+        HTTPStateID
+            The `HTTPStateID` scalar type represents an identifier for an
+            object of type HTTPState.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("id", _args)
+        return await _ctx.execute(HTTPStateID)
 
 
 @typecheck
@@ -10610,6 +11096,28 @@ class Module(Type):
         _ctx = self._select("serve", _args)
         await _ctx.execute()
 
+    def services(
+        self,
+        *,
+        include: list[str] | None = None,
+    ) -> "UpGroup":
+        """Return all services defined by the module
+
+        .. caution::
+            Experimental: This API is highly experimental and may be removed
+            or replaced entirely.
+
+        Parameters
+        ----------
+        include:
+            Only include services matching the specified patterns
+        """
+        _args = [
+            Arg("include", include, None),
+        ]
+        _ctx = self._select("services", _args)
+        return UpGroup(_ctx)
+
     def source(self) -> "ModuleSource":
         """The source for the module."""
         _args: list[Arg] = []
@@ -11560,7 +12068,7 @@ class ObjectTypeDef(Type):
     """A definition of a custom object defined in a Module."""
 
     def constructor(self) -> Function:
-        """The function used to construct new instances of this object, if any"""
+        """The function used to construct new instances of this object, if any."""
         _args: list[Arg] = []
         _ctx = self._select("constructor", _args)
         return Function(_ctx)
@@ -11816,7 +12324,14 @@ class Query(Root):
         _ctx = self._select("address", _args)
         return Address(_ctx)
 
-    def cache_volume(self, key: str) -> CacheVolume:
+    def cache_volume(
+        self,
+        key: str,
+        *,
+        source: Directory | None = None,
+        sharing: CacheSharingMode | None = CacheSharingMode.SHARED,
+        owner: str | None = "",
+    ) -> CacheVolume:
         """Constructs a cache volume for a given cache key.
 
         Parameters
@@ -11824,9 +12339,21 @@ class Query(Root):
         key:
             A string identifier to target this cache volume (e.g., "modules-
             cache").
+        source:
+            Identifier of the directory to use as the cache volume's root.
+        sharing:
+            Sharing mode of the cache volume.
+        owner:
+            A user:group to set for the cache volume root.
+            The user and group can either be an ID (1000:1000) or a name
+            (foo:bar).
+            If the group is omitted, it defaults to the same as the user.
         """
         _args = [
             Arg("key", key),
+            Arg("source", source, None),
+            Arg("sharing", sharing, CacheSharingMode.SHARED),
+            Arg("owner", owner, ""),
         ]
         _ctx = self._select("cacheVolume", _args)
         return CacheVolume(_ctx)
@@ -11903,13 +12430,19 @@ class Query(Root):
         return CurrentModule(_ctx)
 
     async def current_type_defs(
-        self, *, hide_core: bool | None = None
+        self,
+        *,
+        return_all_types: bool | None = False,
+        hide_core: bool | None = None,
     ) -> list["TypeDef"]:
         """The TypeDef representations of the objects currently being served in
         the session.
 
         Parameters
         ----------
+        return_all_types:
+            Return the full referenced typedef closure instead of only top-
+            level served typedefs.
         hide_core:
             Strip core API functions from the Query type, leaving only module-
             sourced functions (constructors, entrypoint proxies, etc.).
@@ -11917,6 +12450,7 @@ class Query(Root):
             and method chaining still work.
         """
         _args = [
+            Arg("returnAllTypes", return_all_types, False),
             Arg("hideCore", hide_core, None),
         ]
         _ctx = self._select("currentTypeDefs", _args)
@@ -12139,6 +12673,7 @@ class Query(Root):
         *,
         name: str | None = None,
         permissions: int | None = None,
+        checksum: str | None = None,
         auth_header: "Secret | None" = None,
         experimental_service_host: "Service | None" = None,
     ) -> File:
@@ -12153,6 +12688,8 @@ class Query(Root):
             URL.
         permissions:
             Permissions to set on the file.
+        checksum:
+            Expected digest of the downloaded content (e.g., "sha256:...").
         auth_header:
             Secret used to populate the Authorization HTTP header
         experimental_service_host:
@@ -12162,6 +12699,7 @@ class Query(Root):
             Arg("url", url),
             Arg("name", name, None),
             Arg("permissions", permissions, None),
+            Arg("checksum", checksum, None),
             Arg("authHeader", auth_header, None),
             Arg("experimentalServiceHost", experimental_service_host, None),
         ]
@@ -12271,6 +12809,16 @@ class Query(Root):
         _ctx = self._select("loadCheckGroupFromID", _args)
         return CheckGroup(_ctx)
 
+    def load_client_filesync_mirror_from_id(
+        self, id: ClientFilesyncMirrorID
+    ) -> ClientFilesyncMirror:
+        """Load a ClientFilesyncMirror from its ID."""
+        _args = [
+            Arg("id", id),
+        ]
+        _ctx = self._select("loadClientFilesyncMirrorFromID", _args)
+        return ClientFilesyncMirror(_ctx)
+
     def load_cloud_from_id(self, id: CloudID) -> Cloud:
         """Load a Cloud from its ID."""
         _args = [
@@ -12294,6 +12842,14 @@ class Query(Root):
         ]
         _ctx = self._select("loadCurrentModuleFromID", _args)
         return CurrentModule(_ctx)
+
+    def load_diff_stat_from_id(self, id: DiffStatID) -> DiffStat:
+        """Load a DiffStat from its ID."""
+        _args = [
+            Arg("id", id),
+        ]
+        _ctx = self._select("loadDiffStatFromID", _args)
+        return DiffStat(_ctx)
 
     def load_directory_from_id(self, id: DirectoryID) -> Directory:
         """Load a Directory from its ID."""
@@ -12487,6 +13043,14 @@ class Query(Root):
         _ctx = self._select("loadGitRepositoryFromID", _args)
         return GitRepository(_ctx)
 
+    def load_http_state_from_id(self, id: HTTPStateID) -> HTTPState:
+        """Load a HTTPState from its ID."""
+        _args = [
+            Arg("id", id),
+        ]
+        _ctx = self._select("loadHTTPStateFromID", _args)
+        return HTTPState(_ctx)
+
     def load_healthcheck_config_from_id(
         self, id: HealthcheckConfigID
     ) -> HealthcheckConfig:
@@ -12613,6 +13177,16 @@ class Query(Root):
         _ctx = self._select("loadQueryFromID", _args)
         return Query(_ctx)
 
+    def load_remote_git_mirror_from_id(
+        self, id: RemoteGitMirrorID
+    ) -> "RemoteGitMirror":
+        """Load a RemoteGitMirror from its ID."""
+        _args = [
+            Arg("id", id),
+        ]
+        _ctx = self._select("loadRemoteGitMirrorFromID", _args)
+        return RemoteGitMirror(_ctx)
+
     def load_sdk_config_from_id(self, id: SDKConfigID) -> "SDKConfig":
         """Load a SDKConfig from its ID."""
         _args = [
@@ -12700,6 +13274,22 @@ class Query(Root):
         ]
         _ctx = self._select("loadTypeDefFromID", _args)
         return TypeDef(_ctx)
+
+    def load_up_from_id(self, id: UpID) -> "Up":
+        """Load a Up from its ID."""
+        _args = [
+            Arg("id", id),
+        ]
+        _ctx = self._select("loadUpFromID", _args)
+        return Up(_ctx)
+
+    def load_up_group_from_id(self, id: UpGroupID) -> "UpGroup":
+        """Load a UpGroup from its ID."""
+        _args = [
+            Arg("id", id),
+        ]
+        _ctx = self._select("loadUpGroupFromID", _args)
+        return UpGroup(_ctx)
 
     def load_workspace_from_id(self, id: WorkspaceID) -> "Workspace":
         """Load a Workspace from its ID."""
@@ -12861,6 +13451,35 @@ class Query(Root):
         This is useful for reusability and readability by not breaking the calling chain.
         """
         return cb(self)
+
+
+@typecheck
+class RemoteGitMirror(Type):
+    """An internal persistent bare git mirror."""
+
+    async def id(self) -> RemoteGitMirrorID:
+        """A unique identifier for this RemoteGitMirror.
+
+        Note
+        ----
+        This is lazily evaluated, no operation is actually run.
+
+        Returns
+        -------
+        RemoteGitMirrorID
+            The `RemoteGitMirrorID` scalar type represents an identifier for
+            an object of type RemoteGitMirror.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("id", _args)
+        return await _ctx.execute(RemoteGitMirrorID)
 
 
 @typecheck
@@ -13961,6 +14580,27 @@ class TypeDef(Type):
         _ctx = self._select("kind", _args)
         return await _ctx.execute(TypeDefKind)
 
+    async def name(self) -> str:
+        """The canonical non-optional name of the type.
+
+        Returns
+        -------
+        str
+            The `String` scalar type represents textual data, represented as
+            UTF-8 character sequences. The String type is most often used by
+            GraphQL to represent free-form human-readable text.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("name", _args)
+        return await _ctx.execute(str)
+
     async def optional(self) -> bool:
         """Whether this type can be set to null. Defaults to false.
 
@@ -14220,6 +14860,161 @@ class TypeDef(Type):
 
     def with_(self, cb: Callable[["TypeDef"], "TypeDef"]) -> "TypeDef":
         """Call the provided callable with current TypeDef.
+
+        This is useful for reusability and readability by not breaking the calling chain.
+        """
+        return cb(self)
+
+
+@typecheck
+class Up(Type):
+    async def description(self) -> str:
+        """The description of the service
+
+        Returns
+        -------
+        str
+            The `String` scalar type represents textual data, represented as
+            UTF-8 character sequences. The String type is most often used by
+            GraphQL to represent free-form human-readable text.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("description", _args)
+        return await _ctx.execute(str)
+
+    async def id(self) -> UpID:
+        """A unique identifier for this Up.
+
+        Note
+        ----
+        This is lazily evaluated, no operation is actually run.
+
+        Returns
+        -------
+        UpID
+            The `UpID` scalar type represents an identifier for an object of
+            type Up.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("id", _args)
+        return await _ctx.execute(UpID)
+
+    async def name(self) -> str:
+        """Return the fully qualified name of the service
+
+        Returns
+        -------
+        str
+            The `String` scalar type represents textual data, represented as
+            UTF-8 character sequences. The String type is most often used by
+            GraphQL to represent free-form human-readable text.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("name", _args)
+        return await _ctx.execute(str)
+
+    def original_module(self) -> Module:
+        """The original module in which the service has been defined"""
+        _args: list[Arg] = []
+        _ctx = self._select("originalModule", _args)
+        return Module(_ctx)
+
+    async def path(self) -> list[str]:
+        """The path of the service within its module
+
+        Returns
+        -------
+        list[str]
+            The `String` scalar type represents textual data, represented as
+            UTF-8 character sequences. The String type is most often used by
+            GraphQL to represent free-form human-readable text.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("path", _args)
+        return await _ctx.execute(list[str])
+
+    def run(self) -> Self:
+        """Execute the service function"""
+        _args: list[Arg] = []
+        _ctx = self._select("run", _args)
+        return Up(_ctx)
+
+    def with_(self, cb: Callable[["Up"], "Up"]) -> "Up":
+        """Call the provided callable with current Up.
+
+        This is useful for reusability and readability by not breaking the calling chain.
+        """
+        return cb(self)
+
+
+@typecheck
+class UpGroup(Type):
+    async def id(self) -> UpGroupID:
+        """A unique identifier for this UpGroup.
+
+        Note
+        ----
+        This is lazily evaluated, no operation is actually run.
+
+        Returns
+        -------
+        UpGroupID
+            The `UpGroupID` scalar type represents an identifier for an object
+            of type UpGroup.
+
+        Raises
+        ------
+        ExecuteTimeoutError
+            If the time to execute the query exceeds the configured timeout.
+        QueryError
+            If the API returns an error.
+        """
+        _args: list[Arg] = []
+        _ctx = self._select("id", _args)
+        return await _ctx.execute(UpGroupID)
+
+    async def list_(self) -> list[Up]:
+        """Return a list of individual services and their details"""
+        _args: list[Arg] = []
+        _ctx = self._select("list", _args)
+        return await _ctx.execute_object_list(Up)
+
+    def run(self) -> Self:
+        """Execute all selected service functions"""
+        _args: list[Arg] = []
+        _ctx = self._select("run", _args)
+        return UpGroup(_ctx)
+
+    def with_(self, cb: Callable[["UpGroup"], "UpGroup"]) -> "UpGroup":
+        """Call the provided callable with current UpGroup.
 
         This is useful for reusability and readability by not breaking the calling chain.
         """
@@ -14515,6 +15310,24 @@ class Workspace(Type):
         _ctx = self._select("path", _args)
         return await _ctx.execute(str)
 
+    def services(
+        self,
+        *,
+        include: list[str] | None = None,
+    ) -> UpGroup:
+        """Return all services from modules loaded in the workspace.
+
+        Parameters
+        ----------
+        include:
+            Only include services matching the specified patterns
+        """
+        _args = [
+            Arg("include", include, None),
+        ]
+        _ctx = self._select("services", _args)
+        return UpGroup(_ctx)
+
 
 class Client(Query):
     """The Dagger client.
@@ -14547,12 +15360,17 @@ __all__ = [
     "CheckGroupID",
     "CheckID",
     "Client",
+    "ClientFilesyncMirror",
+    "ClientFilesyncMirrorID",
     "Cloud",
     "CloudID",
     "Container",
     "ContainerID",
     "CurrentModule",
     "CurrentModuleID",
+    "DiffStat",
+    "DiffStatID",
+    "DiffStatKind",
     "Directory",
     "DirectoryID",
     "Engine",
@@ -14602,6 +15420,8 @@ __all__ = [
     "GitRefID",
     "GitRepository",
     "GitRepositoryID",
+    "HTTPState",
+    "HTTPStateID",
     "HealthcheckConfig",
     "HealthcheckConfigID",
     "Host",
@@ -14638,6 +15458,8 @@ __all__ = [
     "PortID",
     "Query",
     "QueryID",
+    "RemoteGitMirror",
+    "RemoteGitMirrorID",
     "ReturnType",
     "SDKConfig",
     "SDKConfigID",
@@ -14662,6 +15484,10 @@ __all__ = [
     "TypeDef",
     "TypeDefID",
     "TypeDefKind",
+    "Up",
+    "UpGroup",
+    "UpGroupID",
+    "UpID",
     "Void",
     "Workspace",
     "WorkspaceID",
