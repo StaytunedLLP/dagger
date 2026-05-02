@@ -18,9 +18,9 @@ color-eyre = "0.6.2"
 serde = { version = "1.0.195", features = ["derive"] }
 serde_json = "1.0.111"
 serde_graphql_input = { version = "0.1.1" }
-tokio = { version = "1.35.1", features = ["full"] }
+tokio = { version = "1.38.2", features = ["full"] }
 tracing = { version = "0.1.40", features = ["log"] }
-tracing-subscriber = { version = "0.3.18", features = [
+tracing-subscriber = { version = "0.3.20", features = [
   "tracing-log",
   "tracing",
 ] }
@@ -42,7 +42,7 @@ reqwest = { version = "0.11.23", features = [
   "rustls-tls",
 ], default-features = false }
 sha2 = "0.10.8"
-tar = "0.4.40"
+tar = "0.4.45"
 tempfile = "3.9.0"
 async-trait = "0.1.77"
 genco = "0.17.8"
